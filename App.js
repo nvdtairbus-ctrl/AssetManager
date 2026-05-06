@@ -11,9 +11,11 @@ import {
   RefreshControl,
   SafeAreaView,
   Dimensions,
+  Platform,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import ExpoVpnChecker from 'expo-vpn-checker';
 
 const { width, height } = Dimensions.get('window');
 
@@ -59,26 +61,52 @@ export default function App() {
   
   const [ownershipFilter, setOwnershipFilter] = useState('all');
   const [showOwnershipChart, setShowOwnershipChart] = useState(false);
+  
+  // ==================== VPN State ====================
+  const [isVpnActive, setIsVpnActive] = useState(false);
+  const [vpnStatusText, setVpnStatusText] = useState('در حال بررسی...');
 
   // ==================== توابع دریافت قیمت خودکار ====================
   const fetchOnlinePrices = async () => {
     try {
-      // دریافت قیمت دلار از bonbast
-      const usdResponse = await fetch('https://api.exchangerate.host/latest?base=USD');
-      const usdData = await usdResponse.json();
+      // بررسی وضعیت VPN
+      let vpnActive = false;
+      try {
+        vpnActive = await ExpoVpnChecker.checkVpn();
+      } catch (e) {
+        console.log('خطا در تشخیص VPN:', e);
+      }
       
-      // قیمت دلار به تومان (مقدار ثابت تقریبی از bonbast)
-      const usdPrice = 60000; // مقدار پیش‌فرض معمولی
+      if (!vpnActive && Platform.OS !== 'web') {
+        console.log('VPN فعال نیست، دریافت قیمت‌ها ممکن است با مشکل مواجه شود');
+      }
+      
+      // دریافت قیمت دلار از bonbast (از طریق API جایگزین)
+      const usdResponse = await fetch('https://api.exchangerate.host/latest?base=USD');
+      let usdPrice = 60000; // مقدار پیش‌فرض
+      
+      if (usdResponse.ok) {
+        const usdData = await usdResponse.json();
+        const rialRate = usdData.rates?.IRR || 60000;
+        usdPrice = rialRate / 10;
+      }
       
       // دریافت قیمت طلا از api
-      const goldResponse = await fetch('https://api.goldapi.io/v1/XAU/USD', {
-        headers: { 'x-access-token': 'goldapi-6q5i3w-8x2k4l' }
-      });
-      const goldData = await goldResponse.json();
+      let goldGramPrice = 2000000; // مقدار پیش‌فرض
+      try {
+        const goldResponse = await fetch('https://api.goldapi.io/v1/XAU/USD', {
+          headers: { 'x-access-token': 'goldapi-6q5i3w-8x2k4l' }
+        });
+        if (goldResponse.ok) {
+          const goldData = await goldResponse.json();
+          goldGramPrice = (goldData.price * usdPrice) / 31.1035;
+        }
+      } catch (goldError) {
+        console.log('خطا در دریافت قیمت طلا:', goldError);
+      }
       
-      // محاسبه قیمت‌های سکه بر اساس طلا (روش تقریبی)
-      const goldGramPrice = (goldData.price * usdPrice) / 31.1035;
-      const emamiPrice = goldGramPrice * 8.133; // وزن سکه امامی
+      // محاسبه قیمت‌های سکه بر اساس طلا
+      const emamiPrice = goldGramPrice * 8.133;
       const nimPrice = emamiPrice / 2;
       const robPrice = emamiPrice / 4;
       const geramiPrice = goldGramPrice;
@@ -112,7 +140,7 @@ export default function App() {
       
       const savedPrices = await AsyncStorage.getItem('manualPrices');
       if (savedPrices) setManualPrices(JSON.parse(savedPrices));
-      else await fetchOnlinePrices(); // در صورت نداشتن قیمت، از آنلاین بگیر
+      else await fetchOnlinePrices();
       
       const savedRates = await AsyncStorage.getItem('exchangeRates');
       if (savedRates) setExchangeRates(JSON.parse(savedRates));
@@ -348,6 +376,30 @@ export default function App() {
     scrollViewRef.current?.scrollTo({ x: page * width, animated: true });
   };
 
+  // ==================== بررسی وضعیت VPN ====================
+  useEffect(() => {
+    const checkVpnStatus = async () => {
+      try {
+        if (Platform.OS !== 'web') {
+          const result = await ExpoVpnChecker.checkVpn();
+          setIsVpnActive(result);
+          setVpnStatusText(result ? '✅ VPN فعال است' : '⚠️ VPN فعال نیست');
+          
+          if (!result && !isOnline) {
+            Alert.alert('توجه', 'برای دریافت قیمت‌های لحظه‌ای، لطفاً VPN خود را روشن کنید');
+          }
+        } else {
+          setVpnStatusText('⚠️ وب');
+        }
+      } catch (error) {
+        console.log('خطا در تشخیص VPN:', error);
+        setVpnStatusText('❌ خطا در بررسی وضعیت VPN');
+      }
+    };
+    
+    checkVpnStatus();
+  }, []);
+
   const renderOwnershipSelector = () => (
     <View style={styles.ownershipSelector}>
       <Text style={styles.fieldLabel}>🏷️ نوع مالکیت</Text>
@@ -504,6 +556,10 @@ export default function App() {
           <View style={[styles.statusDot, isOnline ? styles.online : styles.offline]} />
           <Text style={styles.statusText}>{isOnline ? 'آنلاین' : 'آفلاین - خطا در دریافت نرخ ارزها'}</Text>
           {lastUpdateTime && <Text style={styles.lastUpdateText}>آخرین بروزرسانی: {lastUpdateTime}</Text>}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 12 }}>
+            <View style={[styles.statusDot, { backgroundColor: isVpnActive ? '#28a745' : '#dc3545' }]} />
+            <Text style={styles.statusText}>{vpnStatusText}</Text>
+          </View>
         </View>
         
         <View style={styles.cardsContainerVertical}>
