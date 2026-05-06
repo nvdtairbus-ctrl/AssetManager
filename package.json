@@ -12,6 +12,7 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/datetimepicker": "8.4.4",
     "axios": "^1.16.0",
+    "bonbast-api": "^1.0.1",
     "cheerio": "^1.2.0",
     "expo": "~54.0.33",
     "expo-build-properties": "~1.0.10",

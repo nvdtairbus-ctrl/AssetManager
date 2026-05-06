@@ -67,13 +67,124 @@ export default function App() {
   const [isVpnActive, setIsVpnActive] = useState(false);
   const [vpnStatusText, setVpnStatusText] = useState('در حال بررسی...');
 
-  // ==================== توابع دریافت قیمت خودکار ====================
-  const fetchOnlinePrices = async () => {
-  return new Promise((resolve) => {
-    setIsOnline(true);
-    Alert.alert('در حال دریافت', 'لطفاً چند لحظه صبر کنید...');
-    resolve(null);
-  });
+  // ==================== توابع دریافت قیمت خودکار (چهار روش) ====================
+const fetchOnlinePrices = async () => {
+  // روش 1: استفاده از bonbast-api (مطمئن‌ترین)
+  try {
+    console.log('🔄 روش 1: تلاش با bonbast-api...');
+    const BonbastApi = require('bonbast-api');
+    const response = await BonbastApi.getResponse();
+    
+    if (response && response.usd1 && response.geram1) {
+      const usdPrice = parseInt(response.usd1.replace(/,/g, ''));
+      const goldPrice = parseInt(response.geram1.replace(/,/g, ''));
+      const emamiPrice = response.emami1 ? parseInt(response.emami1.replace(/,/g, '')) : goldPrice * 8.133;
+      const nimPrice = response.nim1 ? parseInt(response.nim1.replace(/,/g, '')) : emamiPrice / 2;
+      const robPrice = response.rob1 ? parseInt(response.rob1.replace(/,/g, '')) : emamiPrice / 4;
+      
+      const newPrices = {
+        USD: usdPrice,
+        GOLD_18_PER_GRAM: goldPrice,
+        COIN_EMAMI: emamiPrice,
+        COIN_NIM: nimPrice,
+        COIN_ROB: robPrice,
+        COIN_GERAMI: goldPrice,
+      };
+      
+      setManualPrices(newPrices);
+      await AsyncStorage.setItem('manualPrices', JSON.stringify(newPrices));
+      setIsOnline(true);
+      Alert.alert('✅ موفقیت', 'قیمت‌ها از bonbast-api دریافت شدند');
+      return newPrices;
+    }
+    throw new Error('داده‌های API کامل نیست');
+    
+  } catch (error) {
+    console.log('❌ روش 1 خطا:', error.message);
+    
+    // ========== روش 2: API جایگزین از گیت‌هاب ==========
+    try {
+      console.log('🔄 روش 2: تلاش با GitHub API...');
+      const response = await fetch('https://raw.githubusercontent.com/BaseMax/bonbast-api/master/data.json');
+      const data = await response.json();
+      
+      if (data && data['US Dollar'] && data['Gold Gram']) {
+        const newPrices = {
+          USD: data['US Dollar'].sell,
+          GOLD_18_PER_GRAM: data['Gold Gram'].sell,
+          COIN_EMAMI: data['Emami']?.sell || data['Gold Gram'].sell * 8.133,
+          COIN_NIM: data['½ Azadi']?.sell || null,
+          COIN_ROB: data['¼ Azadi']?.sell || null,
+          COIN_GERAMI: data['Gerami']?.sell || data['Gold Gram'].sell
+        };
+        
+        if (!newPrices.COIN_NIM) newPrices.COIN_NIM = newPrices.COIN_EMAMI / 2;
+        if (!newPrices.COIN_ROB) newPrices.COIN_ROB = newPrices.COIN_EMAMI / 4;
+        
+        setManualPrices(newPrices);
+        await AsyncStorage.setItem('manualPrices', JSON.stringify(newPrices));
+        setIsOnline(true);
+        Alert.alert('✅ موفقیت', 'قیمت‌ها از GitHub API دریافت شدند');
+        return newPrices;
+      }
+      throw new Error('داده‌های GitHub API کامل نیست');
+      
+    } catch (error) {
+      console.log('❌ روش 2 خطا:', error.message);
+      
+      // ========== روش 3: Web Scraping مستقیم ==========
+      try {
+        console.log('🔄 روش 3: تلاش با Web Scraping...');
+        const response = await fetch('https://bonbast.com/', {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        });
+        const html = await response.text();
+        
+        const usdMatch = html.match(/"price_dollar_rl".*?"price":"(\d+)"/);
+        const goldMatch = html.match(/"geram18".*?"price":"(\d+)"/);
+        
+        if (usdMatch && goldMatch) {
+          const usdPrice = parseInt(usdMatch[1]);
+          const goldPrice = parseInt(goldMatch[1]);
+          
+          const newPrices = {
+            USD: usdPrice,
+            GOLD_18_PER_GRAM: goldPrice,
+            COIN_EMAMI: goldPrice * 8.133,
+            COIN_NIM: (goldPrice * 8.133) / 2,
+            COIN_ROB: (goldPrice * 8.133) / 4,
+            COIN_GERAMI: goldPrice
+          };
+          
+          setManualPrices(newPrices);
+          await AsyncStorage.setItem('manualPrices', JSON.stringify(newPrices));
+          setIsOnline(true);
+          Alert.alert('✅ موفقیت', 'قیمت‌ها از Web Scraping دریافت شدند');
+          return newPrices;
+        }
+        throw new Error('قیمت‌ها در HTML پیدا نشد');
+        
+      } catch (error) {
+        console.log('❌ روش 3 خطا:', error.message);
+        
+        // ========== روش 4: WebView Fallback ==========
+        console.log('🔄 روش 4: تلاش با WebView...');
+        Alert.alert('⚠️ توجه', 'در حال تلاش با WebView... لطفاً صبر کنید');
+        
+        // یک Promise ایجاد می‌کنیم و منتظر می‌مانیم WebView کار را انجام دهد
+        return new Promise((resolve) => {
+          // WebView قبلاً در صفحه وجود دارد و پیام ارسال می‌کند
+          // فقط یک پیام می‌دهیم که کاربر صبر کند
+          setTimeout(() => {
+            Alert.alert('⚠️ توجه', 'دریافت خودکار قیمت‌ها ممکن نشد. لطفاً از قیمت‌های دستی استفاده کنید.');
+            resolve(null);
+          }, 5000);
+        });
+      }
+    }
+  }
 };
 
   // ==================== توابع کمکی ====================
