@@ -28,7 +28,7 @@
     },
     "plugins": [
       [
-        "expo-config-plugins/lib/with-uses-cleartext-traffic",
+        "expo-build-properties",
         {
           "android": {
             "usesCleartextTraffic": true
