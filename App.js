@@ -1,3 +1,4 @@
+import { WebView } from 'react-native-webview';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Text,
@@ -68,54 +69,11 @@ export default function App() {
 
   // ==================== توابع دریافت قیمت خودکار ====================
   const fetchOnlinePrices = async () => {
-  try {
+  return new Promise((resolve) => {
     setIsOnline(true);
-    
-    // استفاده از axios به جای fetch
-    const response = await axios({
-      method: 'get',
-      url: 'https://bonbast.com/api/rates',
-      timeout: 10000, // 10 ثانیه تایم اوت
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
-    });
-    
-    const data = response.data;
-    
-    // استخراج قیمت‌ها
-    const usdPrice = data?.usd?.selling;
-    const eurPrice = data?.eur?.selling;
-    const sekebPrice = data?.sekeb?.selling;
-    const nimPrice = data?.nim?.selling;
-    const robPrice = data?.rob?.selling;
-    const geram18Price = data?.geram18?.selling;
-    
-    if (usdPrice && geram18Price) {
-      const newPrices = {
-        USD: usdPrice,
-        GOLD_18_PER_GRAM: geram18Price,
-        COIN_EMAMI: sekebPrice || geram18Price * 8.133,
-        COIN_NIM: nimPrice || (sekebPrice / 2) || (geram18Price * 4.066),
-        COIN_ROB: robPrice || (sekebPrice / 4) || (geram18Price * 2.033),
-        COIN_GERAMI: geram18Price,
-      };
-      
-      setManualPrices(newPrices);
-      await AsyncStorage.setItem('manualPrices', JSON.stringify(newPrices));
-      setIsOnline(true);
-      Alert.alert('موفقیت', 'قیمت‌ها با موفقیت از bonbast به‌روز شدند.');
-      return newPrices;
-    } else {
-      throw new Error('ساختار داده دریافتی کامل نیست');
-    }
-    
-  } catch (error) {
-    console.log('خطا در دریافت قیمت‌ها:', error.message);
-    setIsOnline(false);
-    Alert.alert('خطا', `دریافت خودکار قیمت‌ها ممکن نشد. (${error.message})`);
-    return null;
-  }
+    Alert.alert('در حال دریافت', 'لطفاً چند لحظه صبر کنید...');
+    resolve(null);
+  });
 };
 
   // ==================== توابع کمکی ====================
@@ -908,6 +866,91 @@ export default function App() {
             </View>
           </View>
         </Modal>
+		
+		{/* WebView مخفی برای دریافت قیمت‌ها از bonbast */}
+<WebView
+  source={{ uri: 'https://bonbast.com/' }}
+  style={{ display: 'none', width: 0, height: 0 }}
+  onMessage={async (event) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+      const { usdPrice, geram18Price, sekebPrice, nimPrice, robPrice } = data;
+      
+      if (usdPrice && geram18Price) {
+        const newPrices = {
+          USD: usdPrice,
+          GOLD_18_PER_GRAM: geram18Price,
+          COIN_EMAMI: sekebPrice || geram18Price * 8.133,
+          COIN_NIM: nimPrice || (sekebPrice / 2) || (geram18Price * 4.066),
+          COIN_ROB: robPrice || (sekebPrice / 4) || (geram18Price * 2.033),
+          COIN_GERAMI: geram18Price,
+        };
+        
+        setManualPrices(newPrices);
+        await AsyncStorage.setItem('manualPrices', JSON.stringify(newPrices));
+        setIsOnline(true);
+        Alert.alert('موفقیت', 'قیمت‌ها با موفقیت بروزرسانی شدند.');
+      }
+    } catch (error) {
+      console.log('خطا در پردازش داده bonbast:', error);
+    }
+  }}
+  injectedJavaScript={`
+    (function() {
+      function getNumberFromText(str) {
+        if (!str) return null;
+        const match = str.toString().match(/[\\d,]+/g);
+        if (match) {
+          return parseInt(match[0].replace(/,/g, ''));
+        }
+        return null;
+      }
+      
+      function getPrice(selector, isGold = false) {
+        const element = document.querySelector(selector);
+        if (element) {
+          let priceText = element.innerText || element.textContent;
+          if (isGold) {
+            const match = priceText.match(/[\\d,]+/g);
+            if (match) return parseInt(match[0].replace(/,/g, ''));
+          }
+          return getNumberFromText(priceText);
+        }
+        return null;
+      }
+      
+      function getAllPrices() {
+        const usdElement = document.querySelector('#main-price-USD');
+        if (usdElement && usdElement.innerText) {
+          const usdPrice = getNumberFromText(usdElement.innerText);
+          const goldElement = document.querySelector('td:contains("طلای 18 عیار")');
+          let goldPrice = null;
+          
+          if (goldElement) {
+            const goldRow = goldElement.closest('tr');
+            if (goldRow) {
+              const priceCell = goldRow.querySelector('td.price, td:nth-child(2)');
+              if (priceCell) goldPrice = getNumberFromText(priceCell.innerText);
+            }
+          }
+          
+          if (usdPrice && goldPrice) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              usdPrice: usdPrice,
+              geram18Price: goldPrice
+            }));
+          } else {
+            setTimeout(getAllPrices, 500);
+          }
+        } else {
+          setTimeout(getAllPrices, 500);
+        }
+      }
+      
+      setTimeout(getAllPrices, 1000);
+    })();
+  `}
+/>
       </View>
     </SafeAreaView>
   );
