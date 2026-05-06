@@ -31,7 +31,19 @@
         "expo-build-properties",
         {
           "android": {
-            "usesCleartextTraffic": true
+            "usesCleartextTraffic": true,
+            "networkSecurityConfig": {
+              "domainConfig": [
+                {
+                  "domain": "bonbast.com",
+                  "cleartextTrafficPermitted": true
+                },
+                {
+                  "domain": "api.nexillume.com",
+                  "cleartextTrafficPermitted": true
+                }
+              ]
+            }
           }
         }
       ],
