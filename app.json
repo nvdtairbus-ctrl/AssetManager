@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "AssetManager",
+    "name": "AssetManage",
     "slug": "AssetManager",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -20,12 +20,21 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.nvdtairbus.assetmanager"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
       "@react-native-community/datetimepicker"
     ]
   }
