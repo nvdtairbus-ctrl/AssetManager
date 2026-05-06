@@ -68,68 +68,55 @@ export default function App() {
 
   // ==================== توابع دریافت قیمت خودکار ====================
   const fetchOnlinePrices = async () => {
-    try {
-      // بررسی وضعیت VPN
-      let vpnActive = false;
-      try {
-        vpnActive = await ExpoVpnChecker.checkVpn();
-      } catch (e) {
-        console.log('خطا در تشخیص VPN:', e);
+  try {
+    setIsOnline(true);
+    
+    // استفاده از axios به جای fetch
+    const response = await axios({
+      method: 'get',
+      url: 'https://bonbast.com/api/rates',
+      timeout: 10000, // 10 ثانیه تایم اوت
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       }
-      
-      if (!vpnActive && Platform.OS !== 'web') {
-        console.log('VPN فعال نیست، دریافت قیمت‌ها ممکن است با مشکل مواجه شود');
-      }
-      
-      // دریافت قیمت دلار از bonbast (از طریق API جایگزین)
-      const usdResponse = await fetch('https://api.exchangerate.host/latest?base=USD');
-      let usdPrice = 60000; // مقدار پیش‌فرض
-      
-      if (usdResponse.ok) {
-        const usdData = await usdResponse.json();
-        const rialRate = usdData.rates?.IRR || 60000;
-        usdPrice = rialRate / 10;
-      }
-      
-      // دریافت قیمت طلا از api
-      let goldGramPrice = 2000000; // مقدار پیش‌فرض
-      try {
-        const goldResponse = await fetch('https://api.goldapi.io/v1/XAU/USD', {
-          headers: { 'x-access-token': 'goldapi-6q5i3w-8x2k4l' }
-        });
-        if (goldResponse.ok) {
-          const goldData = await goldResponse.json();
-          goldGramPrice = (goldData.price * usdPrice) / 31.1035;
-        }
-      } catch (goldError) {
-        console.log('خطا در دریافت قیمت طلا:', goldError);
-      }
-      
-      // محاسبه قیمت‌های سکه بر اساس طلا
-      const emamiPrice = goldGramPrice * 8.133;
-      const nimPrice = emamiPrice / 2;
-      const robPrice = emamiPrice / 4;
-      const geramiPrice = goldGramPrice;
-      
+    });
+    
+    const data = response.data;
+    
+    // استخراج قیمت‌ها
+    const usdPrice = data?.usd?.selling;
+    const eurPrice = data?.eur?.selling;
+    const sekebPrice = data?.sekeb?.selling;
+    const nimPrice = data?.nim?.selling;
+    const robPrice = data?.rob?.selling;
+    const geram18Price = data?.geram18?.selling;
+    
+    if (usdPrice && geram18Price) {
       const newPrices = {
         USD: usdPrice,
-        GOLD_18_PER_GRAM: goldGramPrice,
-        COIN_EMAMI: emamiPrice,
-        COIN_NIM: nimPrice,
-        COIN_ROB: robPrice,
-        COIN_GERAMI: geramiPrice,
+        GOLD_18_PER_GRAM: geram18Price,
+        COIN_EMAMI: sekebPrice || geram18Price * 8.133,
+        COIN_NIM: nimPrice || (sekebPrice / 2) || (geram18Price * 4.066),
+        COIN_ROB: robPrice || (sekebPrice / 4) || (geram18Price * 2.033),
+        COIN_GERAMI: geram18Price,
       };
       
       setManualPrices(newPrices);
       await AsyncStorage.setItem('manualPrices', JSON.stringify(newPrices));
       setIsOnline(true);
+      Alert.alert('موفقیت', 'قیمت‌ها با موفقیت از bonbast به‌روز شدند.');
       return newPrices;
-    } catch (error) {
-      console.log('خطا در دریافت آنلاین قیمت‌ها:', error);
-      setIsOnline(false);
-      return null;
+    } else {
+      throw new Error('ساختار داده دریافتی کامل نیست');
     }
-  };
+    
+  } catch (error) {
+    console.log('خطا در دریافت قیمت‌ها:', error.message);
+    setIsOnline(false);
+    Alert.alert('خطا', `دریافت خودکار قیمت‌ها ممکن نشد. (${error.message})`);
+    return null;
+  }
+};
 
   // ==================== توابع کمکی ====================
   const loadAllData = async () => {

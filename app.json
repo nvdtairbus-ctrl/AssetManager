@@ -27,6 +27,14 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      [
+        "expo-config-plugins/lib/with-uses-cleartext-traffic",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
       "@react-native-community/datetimepicker"
     ]
   }
