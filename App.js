@@ -71,15 +71,42 @@ export default function App() {
   const fetchOnlinePrices = async () => {
   try {
     setIsOnline(true);
-    console.log("🔄 دریافت قیمت‌ها از سرور لپ‌تاپ...");
+    console.log("🔄 دریافت قیمت‌ها از GitHub...");
     
-    // آدرس IP لپ‌تاپ خود را وارد کن (از خروجی static_server.py)
-    const response = await fetch('http://192.168.100.4:5000/prices');
+    // آدرس مستقیم فایل prices.json در گیت‌هاب (RAW)
+    const response = await fetch('https://raw.githubusercontent.com/nvdtairbus-ctrl/AssetManager/main/prices.json');
     const data = await response.json();
 
     if (data.usd && data.gold) {
       const newPrices = {
         USD: data.usd,
+        EUR: data.eur,
+        GBP: data.gbp,
+        CHF: data.chf,
+        CAD: data.cad,
+        AUD: data.aud,
+        SEK: data.sek,
+        NOK: data.nok,
+        RUB: data.rub,
+        THB: data.thb,
+        SGD: data.sgd,
+        HKD: data.hkd,
+        AZN: data.azn,
+        AMD: data.amd,
+        DKK: data.dkk,
+        AED: data.aed,
+        JPY: data.jpy,
+        TRY: data.try,
+        CNY: data.cny,
+        SAR: data.sar,
+        INR: data.inr,
+        MYR: data.myr,
+        AFN: data.afn,
+        KWD: data.kwd,
+        IQD: data.iqd,
+        BHD: data.bhd,
+        OMR: data.omr,
+        QAR: data.qar,
         GOLD_18_PER_GRAM: data.gold,
         COIN_EMAMI: data.emami_coin,
         COIN_NIM: data.nim_coin,
@@ -90,7 +117,10 @@ export default function App() {
       setManualPrices(newPrices);
       await AsyncStorage.setItem('manualPrices', JSON.stringify(newPrices));
       setIsOnline(true);
-      Alert.alert('✅ موفقیت', 'قیمت‌ها با موفقیت دریافت شدند');
+      
+      // نمایش پیام با تاریخ آخرین بروزرسانی
+      const lastUpdate = data.last_update ? new Date(data.last_update).toLocaleString('fa-IR') : 'نامشخص';
+      Alert.alert('✅ موفقیت', `قیمت‌ها از GitHub دریافت شدند.\nآخرین بروزرسانی: ${lastUpdate}`);
       return newPrices;
     } else {
       throw new Error('داده‌های دریافتی کامل نیست');
@@ -98,7 +128,7 @@ export default function App() {
   } catch (error) {
     console.log("❌ خطا:", error);
     setIsOnline(false);
-    Alert.alert('⚠️ خطا', 'دریافت خودکار قیمت‌ها ممکن نشد.\n\nلطفاً مطمئن شوید:\n1. سرور روی لپ‌تاپ در حال اجراست\n2. لپ‌تاپ و گوشی به یک Wi-Fi متصل هستند');
+    Alert.alert('⚠️ خطا', 'دریافت خودکار قیمت‌ها ممکن نشد.\n\nلطفاً اینترنت خود را بررسی کنید.');
     return null;
   }
 };
