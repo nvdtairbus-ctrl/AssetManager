@@ -67,89 +67,39 @@ export default function App() {
   const [isVpnActive, setIsVpnActive] = useState(false);
   const [vpnStatusText, setVpnStatusText] = useState('در حال بررسی...');
 
-  // ==================== توابع دریافت قیمت خودکار (سه روش) ====================
-const fetchOnlinePrices = async () => {
-  // ========== روش 1: API جایگزین از گیت‌هاب ==========
+  // ==================== توابع دریافت قیمت خودکار بنبست====================
+  const fetchOnlinePrices = async () => {
   try {
-    console.log('🔄 روش 1: تلاش با GitHub API...');
-    const response = await fetch('https://raw.githubusercontent.com/BaseMax/bonbast-api/master/data.json');
-    const data = await response.json();
+    setIsOnline(true);
+    console.log("🔄 دریافت قیمت‌ها از سرور لپ‌تاپ...");
     
-    if (data && data['US Dollar'] && data['Gold Gram']) {
+    // آدرس IP لپ‌تاپ خود را وارد کن (از خروجی static_server.py)
+    const response = await fetch('http://192.168.100.4:5000/prices');
+    const data = await response.json();
+
+    if (data.usd && data.gold) {
       const newPrices = {
-        USD: data['US Dollar'].sell,
-        GOLD_18_PER_GRAM: data['Gold Gram'].sell,
-        COIN_EMAMI: data['Emami']?.sell || data['Gold Gram'].sell * 8.133,
-        COIN_NIM: data['½ Azadi']?.sell || null,
-        COIN_ROB: data['¼ Azadi']?.sell || null,
-        COIN_GERAMI: data['Gerami']?.sell || data['Gold Gram'].sell
+        USD: data.usd,
+        GOLD_18_PER_GRAM: data.gold,
+        COIN_EMAMI: data.emami_coin,
+        COIN_NIM: data.nim_coin,
+        COIN_ROB: data.rob_coin,
+        COIN_GERAMI: data.gold,
       };
-      
-      if (!newPrices.COIN_NIM) newPrices.COIN_NIM = newPrices.COIN_EMAMI / 2;
-      if (!newPrices.COIN_ROB) newPrices.COIN_ROB = newPrices.COIN_EMAMI / 4;
-      
+
       setManualPrices(newPrices);
       await AsyncStorage.setItem('manualPrices', JSON.stringify(newPrices));
       setIsOnline(true);
-      Alert.alert('✅ موفقیت', 'قیمت‌ها از GitHub API دریافت شدند');
+      Alert.alert('✅ موفقیت', 'قیمت‌ها با موفقیت دریافت شدند');
       return newPrices;
+    } else {
+      throw new Error('داده‌های دریافتی کامل نیست');
     }
-    throw new Error('داده‌های GitHub API کامل نیست');
-    
   } catch (error) {
-    console.log('❌ روش 1 خطا:', error.message);
-    
-    // ========== روش 2: Web Scraping مستقیم ==========
-    try {
-      console.log('🔄 روش 2: تلاش با Web Scraping...');
-      const response = await fetch('https://bonbast.com/', {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-      });
-      const html = await response.text();
-      
-      const usdMatch = html.match(/"price_dollar_rl".*?"price":"(\d+)"/);
-      const goldMatch = html.match(/"geram18".*?"price":"(\d+)"/);
-      
-      if (usdMatch && goldMatch) {
-        const usdPrice = parseInt(usdMatch[1]);
-        const goldPrice = parseInt(goldMatch[1]);
-        
-        const newPrices = {
-          USD: usdPrice,
-          GOLD_18_PER_GRAM: goldPrice,
-          COIN_EMAMI: goldPrice * 8.133,
-          COIN_NIM: (goldPrice * 8.133) / 2,
-          COIN_ROB: (goldPrice * 8.133) / 4,
-          COIN_GERAMI: goldPrice
-        };
-        
-        setManualPrices(newPrices);
-        await AsyncStorage.setItem('manualPrices', JSON.stringify(newPrices));
-        setIsOnline(true);
-        Alert.alert('✅ موفقیت', 'قیمت‌ها از Web Scraping دریافت شدند');
-        return newPrices;
-      }
-      throw new Error('قیمت‌ها در HTML پیدا نشد');
-      
-    } catch (error) {
-      console.log('❌ روش 2 خطا:', error.message);
-      
-      // ========== روش 3: WebView Fallback ==========
-      console.log('🔄 روش 3: تلاش با WebView...');
-      
-      // فقط یک پیام می‌دهیم و منتظر WebView می‌مانیم
-      Alert.alert('⚠️ توجه', 'در حال دریافت قیمت‌ها از bonbast... لطفاً صبر کنید');
-      
-      // WebView قبلاً در صفحه وجود دارد و پیام ارسال می‌کند
-      return new Promise((resolve) => {
-        // اگر WebView کار نکرد، بعد از 10 ثانیه خطا بده
-        setTimeout(() => {
-          resolve(null);
-        }, 10000);
-      });
-    }
+    console.log("❌ خطا:", error);
+    setIsOnline(false);
+    Alert.alert('⚠️ خطا', 'دریافت خودکار قیمت‌ها ممکن نشد.\n\nلطفاً مطمئن شوید:\n1. سرور روی لپ‌تاپ در حال اجراست\n2. لپ‌تاپ و گوشی به یک Wi-Fi متصل هستند');
+    return null;
   }
 };
 
