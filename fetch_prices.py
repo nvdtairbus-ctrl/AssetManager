@@ -8,40 +8,8 @@ def get_tehran_time():
     tehran_tz = timezone(timedelta(hours=3, minutes=30))
     return datetime.now(tehran_tz).isoformat()
 
-def get_price_with_fallback():
-    try:
-        result = subprocess.run(['python', '-m', 'bonbast', 'export'],
-                                capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            return get_fallback_prices()
-        data = json.loads(result.stdout)
-        currencies = {
-            "usd": "usd", "eur": "eur", "gbp": "gbp", "chf": "chf",
-            "cad": "cad", "aud": "aud", "sek": "sek", "nok": "nok",
-            "rub": "rub", "thb": "thb", "sgd": "sgd", "hkd": "hkd",
-            "azn": "azn", "amd": "amd", "dkk": "dkk", "aed": "aed",
-            "jpy": "jpy", "try": "try", "cny": "cny", "sar": "sar",
-            "inr": "inr", "myr": "myr", "afn": "afn", "kwd": "kwd",
-            "iqd": "iqd", "bhd": "bhd", "omr": "omr", "qar": "qar"
-        }
-        prices = {}
-        for code, key in currencies.items():
-            if code in data and 'sell' in data[code]:
-                prices[key] = data[code]['sell']
-            else:
-                prices[key] = None
-        prices["emami_coin"] = data.get('emami1', {}).get('sell')
-        prices["nim_coin"] = data.get('azadi1_2', {}).get('sell')
-        prices["rob_coin"] = data.get('azadi1_4', {}).get('sell')
-        prices["gold"] = data.get('gol18', {}).get('price')
-        if prices.get('eur') is None and prices.get('usd') is not None:
-            prices['eur'] = int(prices['usd'] * 1.18)
-        prices["last_update"] = get_tehran_time()
-        return prices
-    except Exception as e:
-        return get_fallback_prices()
-
 def get_fallback_prices():
+    """قیمت‌های پیش‌فرض در صورت عدم دسترسی"""
     return {
         "usd": 178000, "eur": 209500, "gbp": 242500, "chf": 228800,
         "cad": 130000, "aud": 129000, "sek": 19300, "nok": 19300,
@@ -55,13 +23,78 @@ def get_fallback_prices():
         "last_update": get_tehran_time()
     }
 
+def get_prices():
+    try:
+        result = subprocess.run(['python', '-m', 'bonbast', 'export'],
+                                capture_output=True, text=True, timeout=30)
+        
+        if result.returncode != 0:
+            print("⚠️ خطا در bonbast، استفاده از fallback", file=sys.stderr)
+            return get_fallback_prices()
+        
+        data = json.loads(result.stdout)
+        
+        # بررسی وجود داده
+        if not data or 'usd' not in data or not data['usd'].get('sell'):
+            print("⚠️ داده bonbast ناقص است، استفاده از fallback", file=sys.stderr)
+            return get_fallback_prices()
+        
+        prices = {
+            "usd": data['usd']['sell'],
+            "eur": data.get('eur', {}).get('sell') or 0,
+            "gbp": data.get('gbp', {}).get('sell') or 0,
+            "chf": data.get('chf', {}).get('sell') or 0,
+            "cad": data.get('cad', {}).get('sell') or 0,
+            "aud": data.get('aud', {}).get('sell') or 0,
+            "sek": data.get('sek', {}).get('sell') or 0,
+            "nok": data.get('nok', {}).get('sell') or 0,
+            "rub": data.get('rub', {}).get('sell') or 0,
+            "thb": data.get('thb', {}).get('sell') or 0,
+            "sgd": data.get('sgd', {}).get('sell') or 0,
+            "hkd": data.get('hkd', {}).get('sell') or 0,
+            "azn": data.get('azn', {}).get('sell') or 0,
+            "amd": data.get('amd', {}).get('sell') or 0,
+            "dkk": data.get('dkk', {}).get('sell') or 0,
+            "aed": data.get('aed', {}).get('sell') or 0,
+            "jpy": data.get('jpy', {}).get('sell') or 0,
+            "try": data.get('try', {}).get('sell') or 0,
+            "cny": data.get('cny', {}).get('sell') or 0,
+            "sar": data.get('sar', {}).get('sell') or 0,
+            "inr": data.get('inr', {}).get('sell') or 0,
+            "myr": data.get('myr', {}).get('sell') or 0,
+            "afn": data.get('afn', {}).get('sell') or 0,
+            "kwd": data.get('kwd', {}).get('sell') or 0,
+            "iqd": data.get('iqd', {}).get('sell') or 0,
+            "bhd": data.get('bhd', {}).get('sell') or 0,
+            "omr": data.get('omr', {}).get('sell') or 0,
+            "qar": data.get('qar', {}).get('sell') or 0,
+            "emami_coin": data.get('emami1', {}).get('sell') or 0,
+            "nim_coin": data.get('azadi1_2', {}).get('sell') or 0,
+            "rob_coin": data.get('azadi1_4', {}).get('sell') or 0,
+            "gold": data.get('gol18', {}).get('price') or 0,
+            "last_update": get_tehran_time()
+        }
+        
+        # بررسی موفقیت
+        if prices['usd'] and prices['usd'] > 0:
+            return prices
+        else:
+            print("⚠️ قیمت دلار دریافت نشد، استفاده از fallback", file=sys.stderr)
+            return get_fallback_prices()
+            
+    except Exception as e:
+        print(f"❌ خطا: {e}", file=sys.stderr)
+        return get_fallback_prices()
+
 def save_prices(prices):
     with open('prices.json', 'w', encoding='utf-8') as f:
         json.dump(prices, f, indent=2, ensure_ascii=False)
     print("✅ قیمت‌ها ذخیره شدند")
 
 if __name__ == '__main__':
-    prices = get_price_with_fallback()
+    prices = get_prices()
     save_prices(prices)
     print(f"دلار: {prices['usd']:,} تومان")
+    print(f"یورو: {prices['eur']:,} تومان")
+    print(f"طلای ۱۸ عیار: {prices['gold']:,} تومان")
     sys.exit(0)
