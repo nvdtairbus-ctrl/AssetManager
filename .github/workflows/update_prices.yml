@@ -2,39 +2,29 @@ name: دریافت خودکار قیمت از Bonbast
 
 on:
   schedule:
-    # اجرا هر ساعت (دقیقه 0 هر ساعت)
-    # فرمت: دقیقه ساعت روز-ماه ماه روز-هفته
-    - cron: '0 * * * *'
-  # امکان اجرای دستی از طریق GitHub Actions
+    - cron: '5 * * * *'
   workflow_dispatch:
 
 jobs:
   fetch-prices:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # اجازه push به مخزن
+      contents: write
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Install bonbast package
+      - name: Install
         run: |
-          python -m pip install --upgrade pip
           pip install bonbast
-
-      - name: Run fetch script
+      - name: Run script
         run: python fetch_prices.py
-
-      - name: Commit and push if changed
+      - name: Commit
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git config user.name "GitHub Action"
           git add prices.json
-          git diff --quiet && git diff --staged --quiet || git commit -m "Auto-update prices [skip ci]"
+          git diff --quiet && git diff --staged --quiet || git commit -m "Update prices [skip ci]"
           git push
