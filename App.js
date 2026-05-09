@@ -71,56 +71,77 @@ export default function App() {
   const fetchOnlinePrices = async () => {
   try {
     setIsOnline(true);
-    console.log("🔄 دریافت قیمت‌ها از GitHub...");
+    console.log("🔄 در حال دریافت قیمت‌ها از GitHub...");
     
-    // آدرس مستقیم فایل prices.json در گیت‌هاب (RAW)
-    const response = await fetch('https://raw.githubusercontent.com/nvdtairbus-ctrl/AssetManager/main/prices.json');
+    // اضافه کردن تایم‌استمپ برای جلوگیری از کش
+    const timestamp = new Date().getTime();
+    const url = `https://raw.githubusercontent.com/nvdtairbus-ctrl/AssetManager/main/prices.json?t=${timestamp}`;
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
     const data = await response.json();
+    console.log("📊 داده دریافت شد:", data);
+    console.log("📅 تاریخ بروزرسانی:", data.last_update);
 
-    if (data.usd && data.gold) {
+    // بررسی معتبر بودن داده‌ها
+    if (data && data.usd && data.usd > 0) {
       const newPrices = {
         USD: data.usd,
-        EUR: data.eur,
-        GBP: data.gbp,
-        CHF: data.chf,
-        CAD: data.cad,
-        AUD: data.aud,
-        SEK: data.sek,
-        NOK: data.nok,
-        RUB: data.rub,
-        THB: data.thb,
-        SGD: data.sgd,
-        HKD: data.hkd,
-        AZN: data.azn,
-        AMD: data.amd,
-        DKK: data.dkk,
-        AED: data.aed,
-        JPY: data.jpy,
-        TRY: data.try,
-        CNY: data.cny,
-        SAR: data.sar,
-        INR: data.inr,
-        MYR: data.myr,
-        AFN: data.afn,
-        KWD: data.kwd,
-        IQD: data.iqd,
-        BHD: data.bhd,
-        OMR: data.omr,
-        QAR: data.qar,
-        GOLD_18_PER_GRAM: data.gold,
-        COIN_EMAMI: data.emami_coin,
-        COIN_NIM: data.nim_coin,
-        COIN_ROB: data.rob_coin,
-        COIN_GERAMI: data.gold,
+        EUR: data.eur || 0,
+        GBP: data.gbp || 0,
+        CHF: data.chf || 0,
+        CAD: data.cad || 0,
+        AUD: data.aud || 0,
+        SEK: data.sek || 0,
+        NOK: data.nok || 0,
+        RUB: data.rub || 0,
+        THB: data.thb || 0,
+        SGD: data.sgd || 0,
+        HKD: data.hkd || 0,
+        AZN: data.azn || 0,
+        AMD: data.amd || 0,
+        DKK: data.dkk || 0,
+        AED: data.aed || 0,
+        JPY: data.jpy || 0,
+        TRY: data.try || 0,
+        CNY: data.cny || 0,
+        SAR: data.sar || 0,
+        INR: data.inr || 0,
+        MYR: data.myr || 0,
+        AFN: data.afn || 0,
+        KWD: data.kwd || 0,
+        IQD: data.iqd || 0,
+        BHD: data.bhd || 0,
+        OMR: data.omr || 0,
+        QAR: data.qar || 0,
+        GOLD_18_PER_GRAM: data.gold || 0,
+        GOLD_24_PER_GRAM: data.gold ? Math.round(data.gold * (24 / 18)) : 0,
+        COIN_EMAMI: data.emami_coin || 0,
+        COIN_NIM: data.nim_coin || 0,
+        COIN_ROB: data.rob_coin || 0,
+        COIN_GERAMI: data.gold ? Math.round(data.gold / 4.5) : 0,
+        COIN_BAHAR: data.emami_coin ? Math.round(data.emami_coin * 0.95) : 0,
       };
 
+      console.log("💰 قیمت‌های جدید:", newPrices);
+      
       setManualPrices(newPrices);
       await AsyncStorage.setItem('manualPrices', JSON.stringify(newPrices));
       setIsOnline(true);
       
-      // نمایش پیام با تاریخ آخرین بروزرسانی
-      const lastUpdate = data.last_update ? new Date(data.last_update).toLocaleString('fa-IR') : 'نامشخص';
-      Alert.alert('✅ موفقیت', `قیمت‌ها از GitHub دریافت شدند.\nآخرین بروزرسانی: ${lastUpdate}`);
+      const updateDate = data.last_update ? new Date(data.last_update).toLocaleString('fa-IR') : 'نامشخص';
+      Alert.alert('✅ موفقیت', `قیمت‌ها با موفقیت بروزرسانی شدند.\nآخرین بروزرسانی: ${updateDate}\nقیمت دلار: ${newPrices.USD.toLocaleString()} تومان`);
       return newPrices;
     } else {
       throw new Error('داده‌های دریافتی کامل نیست');
@@ -128,7 +149,7 @@ export default function App() {
   } catch (error) {
     console.log("❌ خطا:", error);
     setIsOnline(false);
-    Alert.alert('⚠️ خطا', 'دریافت خودکار قیمت‌ها ممکن نشد.\n\nلطفاً اینترنت خود را بررسی کنید.');
+    Alert.alert('⚠️ خطا', `دریافت قیمت‌ها ممکن نشد.\nخطا: ${error.message}`);
     return null;
   }
 };
