@@ -101,77 +101,90 @@ export default function App() {
 
   // دریافت قیمت خودکار از GitHub
   const fetchOnlinePrices = async () => {
-    try {
-      setIsOnline(true);
-      const timestamp = new Date().getTime();
-      const url = `https://raw.githubusercontent.com/nvdtairbus-ctrl/AssetManager/main/prices.json?t=${timestamp}`;
-      
-      const response = await fetch(url, {
-        cache: 'no-cache',
-        headers: {
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache',
-          'Expires': '0'
-        }
-      });
-      
-      const data = await response.json();
-
-      if (data.usd) {
-        const newPrices = {
-          USD: data.usd,
-          EUR: data.eur || 0,
-          GBP: data.gbp || 0,
-          CHF: data.chf || 0,
-          CAD: data.cad || 0,
-          AUD: data.aud || 0,
-          SEK: data.sek || 0,
-          NOK: data.nok || 0,
-          RUB: data.rub || 0,
-          THB: data.thb || 0,
-          SGD: data.sgd || 0,
-          HKD: data.hkd || 0,
-          AZN: data.azn || 0,
-          AMD: data.amd || 0,
-          DKK: data.dkk || 0,
-          AED: data.aed || 0,
-          JPY: data.jpy || 0,
-          TRY: data.try || 0,
-          CNY: data.cny || 0,
-          SAR: data.sar || 0,
-          INR: data.inr || 0,
-          MYR: data.myr || 0,
-          AFN: data.afn || 0,
-          KWD: data.kwd || 0,
-          IQD: data.iqd || 0,
-          BHD: data.bhd || 0,
-          OMR: data.omr || 0,
-          QAR: data.qar || 0,
-          GOLD_18_PER_GRAM: data.gold || 0,
-          GOLD_24_PER_GRAM: data.gold ? Math.round(data.gold * (24 / 18)) : 0,
-          COIN_EMAMI: data.emami_coin || 0,
-          COIN_NIM: data.nim_coin || 0,
-          COIN_ROB: data.rob_coin || 0,
-          COIN_GERAMI: data.gold ? Math.round(data.gold / 4.5) : 0,
-          COIN_BAHAR: data.emami_coin ? Math.round(data.emami_coin * 0.95) : 0,
-        };
-
-        setManualPrices(newPrices);
-        await AsyncStorage.setItem('manualPrices', JSON.stringify(newPrices));
-        setIsOnline(true);
-        
-        const lastUpdate = data.last_update ? new Date(data.last_update).toLocaleString('fa-IR') : 'نامشخص';
-        Alert.alert('✅ موفقیت', `قیمت‌ها از GitHub دریافت شدند.\nآخرین بروزرسانی: ${lastUpdate}\nقیمت دلار: ${newPrices.USD.toLocaleString()} تومان`);
-        return newPrices;
+  try {
+    setIsOnline(true);
+    const timestamp = new Date().getTime();
+    const url = `https://raw.githubusercontent.com/nvdtairbus-ctrl/AssetManager/main/prices.json?t=${timestamp}`;
+    
+    const response = await fetch(url, {
+      cache: 'no-cache',
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
       }
-      throw new Error('داده‌های دریافتی کامل نیست');
-    } catch (error) {
-      console.log("❌ خطا:", error);
-      setIsOnline(false);
-      Alert.alert('⚠️ خطا', 'دریافت خودکار قیمت‌ها ممکن نشد.\n\nلطفاً اینترنت خود را بررسی کنید.');
-      return null;
+    });
+    
+    const data = await response.json();
+
+    if (data.usd) {
+      const newPrices = {
+        USD: data.usd,
+        EUR: data.eur || 0,
+        GBP: data.gbp || 0,
+        CHF: data.chf || 0,
+        CAD: data.cad || 0,
+        AUD: data.aud || 0,
+        SEK: data.sek || 0,
+        NOK: data.nok || 0,
+        RUB: data.rub || 0,
+        THB: data.thb || 0,
+        SGD: data.sgd || 0,
+        HKD: data.hkd || 0,
+        AZN: data.azn || 0,
+        AMD: data.amd || 0,
+        DKK: data.dkk || 0,
+        AED: data.aed || 0,
+        JPY: data.jpy || 0,
+        TRY: data.try || 0,
+        CNY: data.cny || 0,
+        SAR: data.sar || 0,
+        INR: data.inr || 0,
+        MYR: data.myr || 0,
+        AFN: data.afn || 0,
+        KWD: data.kwd || 0,
+        IQD: data.iqd || 0,
+        BHD: data.bhd || 0,
+        OMR: data.omr || 0,
+        QAR: data.qar || 0,
+        GOLD_18_PER_GRAM: data.gold || 0,
+        GOLD_24_PER_GRAM: data.gold ? Math.round(data.gold * (24 / 18)) : 0,
+        COIN_EMAMI: data.emami_coin || 0,
+        COIN_NIM: data.nim_coin || 0,
+        COIN_ROB: data.rob_coin || 0,
+        COIN_GERAMI: data.gold ? Math.round(data.gold / 4.5) : 0,
+        COIN_BAHAR: data.emami_coin ? Math.round(data.emami_coin * 0.95) : 0,
+      };
+
+      setManualPrices(newPrices);
+      await AsyncStorage.setItem('manualPrices', JSON.stringify(newPrices));
+      setIsOnline(true);
+      
+      // تبدیل تاریخ و ساعت به شمسی و ایران
+      const lastUpdateRaw = data.last_update;
+      const lastUpdateDate = new Date(lastUpdateRaw);
+      
+      // تاریخ شمسی
+      const jd = jalaali.toJalaali(lastUpdateDate);
+      const persianDate = `${jd.jy}/${String(jd.jm).padStart(2, '0')}/${String(jd.jd).padStart(2, '0')}`;
+      
+      // ساعت (UTC+3:30 ایران)
+      const hours = lastUpdateDate.getHours().toString().padStart(2, '0');
+      const minutes = lastUpdateDate.getMinutes().toString().padStart(2, '0');
+      const seconds = lastUpdateDate.getSeconds().toString().padStart(2, '0');
+      const persianTime = `${hours}:${minutes}:${seconds}`;
+      
+      Alert.alert('✅ موفقیت', `قیمت‌ها از GitHub دریافت شدند.\n📅 تاریخ بروزرسانی: ${persianDate}\n⏰ ساعت: ${persianTime}\n💰 قیمت دلار: ${newPrices.USD.toLocaleString()} تومان`);
+      return newPrices;
     }
-  };
+    throw new Error('داده‌های دریافتی کامل نیست');
+  } catch (error) {
+    console.log("❌ خطا:", error);
+    setIsOnline(false);
+    Alert.alert('⚠️ خطا', 'دریافت خودکار قیمت‌ها ممکن نشد.\n\nلطفاً اینترنت خود را بررسی کنید.');
+    return null;
+  }
+};
 
   const loadAllData = async () => {
     try {
