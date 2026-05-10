@@ -112,7 +112,7 @@ export default function App() {
     const repo = 'AssetManager';
     
     // 3. استفاده از نام فایل (به عنوان رشته) به جای ID عددی
-    const workflow_id = 'update_prices.yml'; 
+    const workflow_id = 273482265;
 
     const response = await fetch(
       `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${workflow_id}/dispatches`,
