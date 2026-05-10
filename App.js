@@ -105,7 +105,7 @@ export default function App() {
     console.log("🚀 ارسال درخواست به GitHub برای اجرای Workflow...");
     
     // 1. توکن معتبر با دسترسی کامل (repo + workflow) - این را عوض کن
-    const GITHUB_TOKEN = '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';
+    const GITHUB_TOKEN = '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';
     
     // 2. اطلاعات مخزن
     const owner = 'nvdtairbus-ctrl';
