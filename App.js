@@ -99,52 +99,6 @@ export default function App() {
   const [isVpnActive, setIsVpnActive] = useState(false);
   const [vpnStatusText, setVpnStatusText] = useState('در حال بررسی...');
 
-  // ==================== تابع اجرای GitHub Actions ====================
-  const triggerGitHubAction = async () => {
-  try {
-    console.log("🚀 ارسال درخواست به GitHub برای اجرای Workflow...");
-    
-    // 1. توکن معتبر با دسترسی کامل (repo + workflow) - این را عوض کن
-    const GITHUB_TOKEN = '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';
-    
-    // 2. اطلاعات مخزن
-    const owner = 'nvdtairbus-ctrl';
-    const repo = 'AssetManager';
-    
-    // 3. استفاده از نام فایل (به عنوان رشته) به جای ID عددی
-    const workflow_id = 273482265;
-
-    const response = await fetch(
-      `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${workflow_id}/dispatches`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${GITHUB_TOKEN}`,
-          'Accept': 'application/vnd.github.v3+json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ref: 'main',
-        }),
-      }
-    );
-
-    if (response.ok) {
-      Alert.alert('✅ درخواست ارسال شد', 'کاربرگیت‌هاب‌اکشن در حال اجراست.\nحدود ۱ دقیقه دیگر قیمت‌ها به‌روز می‌شوند.');
-      setTimeout(() => {
-        fetchOnlinePrices();
-      }, 60000);
-    } else {
-      const errorText = await response.text();
-      console.error('❌ خطا در ارسال درخواست:', errorText);
-      Alert.alert('❌ خطا', 'ارسال درخواست به GitHub ممکن نشد.');
-    }
-  } catch (error) {
-    console.error('❌ خطای شبکه:', error);
-    Alert.alert('❌ خطا', 'مشکل در ارتباط با GitHub.');
-  }
-};
-
   // دریافت قیمت خودکار از GitHub
   const fetchOnlinePrices = async () => {
     try {
@@ -958,10 +912,7 @@ export default function App() {
               </View>
               <Text style={styles.modalSubtitle}>قیمت‌ها به تومان وارد شوند</Text>
 
-              {/* دکمه بروزرسانی با اجرای GitHub Actions */}
-              <TouchableOpacity style={styles.autoUpdateButton} onPress={triggerGitHubAction}>
-                <Text style={styles.autoUpdateButtonText}>🔄 بروزرسانی لحظه‌ای قیمت‌ها (اجرای Action)</Text>
-              </TouchableOpacity>
+              
 
               <ScrollView showsVerticalScrollIndicator={false} style={{ marginTop: 12 }}>
                 {/* 💱 ارزهای اصلی */}
