@@ -1,4 +1,5 @@
 import { WebView } from 'react-native-webview';
+import * as jalaali from 'jalaali-js';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Text,
@@ -160,21 +161,27 @@ export default function App() {
       await AsyncStorage.setItem('manualPrices', JSON.stringify(newPrices));
       setIsOnline(true);
       
-      // تبدیل تاریخ و ساعت به شمسی و ایران
+      // تبدیل UTC به زمان ایران (UTC+3:30)
       const lastUpdateRaw = data.last_update;
-      const lastUpdateDate = new Date(lastUpdateRaw);
-      
-      // تاریخ شمسی
-      const jd = jalaali.toJalaali(lastUpdateDate);
-      const persianDate = `${jd.jy}/${String(jd.jm).padStart(2, '0')}/${String(jd.jd).padStart(2, '0')}`;
-      
-      // ساعت (UTC+3:30 ایران)
-      const hours = lastUpdateDate.getHours().toString().padStart(2, '0');
-      const minutes = lastUpdateDate.getMinutes().toString().padStart(2, '0');
-      const seconds = lastUpdateDate.getSeconds().toString().padStart(2, '0');
-      const persianTime = `${hours}:${minutes}:${seconds}`;
-      
-      Alert.alert('✅ موفقیت', `قیمت‌ها از GitHub دریافت شدند.\n📅 تاریخ بروزرسانی: ${persianDate}\n⏰ ساعت: ${persianTime}\n💰 قیمت دلار: ${newPrices.USD.toLocaleString()} تومان`);
+      if (lastUpdateRaw) {
+        const utcDate = new Date(lastUpdateRaw);
+        // اضافه کردن 3 ساعت و 30 دقیقه برای زمان ایران
+        const iranTime = new Date(utcDate.getTime() + (3.5 * 60 * 60 * 1000));
+        
+        // تاریخ شمسی
+        const jd = jalaali.toJalaali(iranTime);
+        const persianDate = `${jd.jy}/${String(jd.jm).padStart(2, '0')}/${String(jd.jd).padStart(2, '0')}`;
+        
+        // ساعت ایران
+        const hours = iranTime.getHours().toString().padStart(2, '0');
+        const minutes = iranTime.getMinutes().toString().padStart(2, '0');
+        const seconds = iranTime.getSeconds().toString().padStart(2, '0');
+        const persianTime = `${hours}:${minutes}:${seconds}`;
+        
+        Alert.alert('✅ موفقیت', `قیمت‌ها از GitHub دریافت شدند.\n📅 تاریخ: ${persianDate}\n⏰ ساعت ایران: ${persianTime}\n💰 قیمت دلار: ${newPrices.USD.toLocaleString()} تومان`);
+      } else {
+        Alert.alert('✅ موفقیت', `قیمت‌ها از GitHub دریافت شدند.\n💰 قیمت دلار: ${newPrices.USD.toLocaleString()} تومان`);
+      }
       return newPrices;
     }
     throw new Error('داده‌های دریافتی کامل نیست');
