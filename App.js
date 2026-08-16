@@ -1,6 +1,6 @@
-import { WebView } from 'react-native-webview';
-import * as jalaali from 'jalaali-js';
-import React, { useState, useEffect, useRef } from 'react';
+// App.js - نسخه نهایی با اعمال بهبودهای جدید
+
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Text,
   View,
@@ -14,56 +14,261 @@ import {
   SafeAreaView,
   Dimensions,
   Platform,
+  ActivityIndicator,
+  StatusBar,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import ExpoVpnChecker from 'expo-vpn-checker';
+import * as jalaali from 'jalaali-js';
+
+// ==================== پلتفرم‌های اختیاری ====================
+let ExpoVpnChecker = null;
+try {
+  ExpoVpnChecker = require('expo-vpn-checker').default;
+} catch (e) {
+  console.log('expo-vpn-checker not available');
+}
 
 const { width, height } = Dimensions.get('window');
 
+// ==================== VERSION & MIGRATION ====================
+const DATA_VERSION = 2;
+// نسخه ۱: بدون ownership
+// نسخه ۲: اضافه شدن ownership
+
+const migrateAsset = (asset) => {
+  let migrated = { ...asset };
+  const currentVersion = migrated._dataVersion || 1;
+
+  if (currentVersion < 2) {
+    migrated.ownership = migrated.ownership || 'personal';
+  }
+
+  // migration های آینده اینجا اضافه می‌شوند:
+  // if (currentVersion < 3) { ... }
+
+  migrated._dataVersion = DATA_VERSION;
+  return migrated;
+};
+
 // ==================== CONSTANTS ====================
-const SUPPORTED_CURRENCIES = [
-  'USD', 'EUR', 'GBP', 'CHF', 'CAD', 'AUD', 'SEK', 'NOK', 'RUB', 'THB',
-  'SGD', 'HKD', 'AZN', 'AMD', 'DKK', 'AED', 'JPY', 'TRY', 'CNY', 'SAR',
-  'INR', 'MYR', 'AFN', 'KWD', 'IQD', 'BHD', 'OMR', 'QAR'
-];
+const CURRENCY_CONFIG = {
+  USD: { flag: '🇺🇸', name: 'دلار آمریکا', group: 'main' },
+  EUR: { flag: '🇪🇺', name: 'یورو', group: 'main' },
+  GBP: { flag: '🇬🇧', name: 'پوند انگلیس', group: 'main' },
+  CHF: { flag: '🇨🇭', name: 'فرانک سوئیس', group: 'main' },
+  CAD: { flag: '🇨🇦', name: 'دلار کانادا', group: 'main' },
+  AUD: { flag: '🇦🇺', name: 'دلار استرالیا', group: 'main' },
+  SEK: { flag: '🇸🇪', name: 'کرون سوئد', group: 'main' },
+  NOK: { flag: '🇳🇴', name: 'کرون نروژ', group: 'main' },
+  RUB: { flag: '🇷🇺', name: 'روبل روسیه', group: 'main' },
+  THB: { flag: '🇹🇭', name: 'بات تایلند', group: 'main' },
+  SGD: { flag: '🇸🇬', name: 'دلار سنگاپور', group: 'other' },
+  HKD: { flag: '🇭🇰', name: 'دلار هنگ‌کنگ', group: 'other' },
+  AZN: { flag: '🇦🇿', name: 'منات آذربایجان', group: 'other' },
+  AMD: { flag: '🇦🇲', name: 'درام ارمنستان', group: 'other' },
+  DKK: { flag: '🇩🇰', name: 'کرون دانمارک', group: 'other' },
+  AED: { flag: '🇦🇪', name: 'درهم امارات', group: 'other' },
+  JPY: { flag: '🇯🇵', name: 'ین ژاپن', group: 'other' },
+  TRY: { flag: '🇹🇷', name: 'لیر ترکیه', group: 'other' },
+  CNY: { flag: '🇨🇳', name: 'یوان چین', group: 'other' },
+  SAR: { flag: '🇸🇦', name: 'ریال سعودی', group: 'other' },
+  INR: { flag: '🇮🇳', name: 'روپیه هند', group: 'other' },
+  MYR: { flag: '🇲🇾', name: 'رینگیت مالزی', group: 'other' },
+  AFN: { flag: '🇦🇫', name: 'افغانی افغانستان', group: 'other' },
+  KWD: { flag: '🇰🇼', name: 'دینار کویت', group: 'other' },
+  IQD: { flag: '🇮🇶', name: 'دینار عراق', group: 'other' },
+  BHD: { flag: '🇧🇭', name: 'دینار بحرین', group: 'other' },
+  OMR: { flag: '🇴🇲', name: 'ریال عمان', group: 'other' },
+  QAR: { flag: '🇶🇦', name: 'ریال قطر', group: 'other' },
+};
+
+const SUPPORTED_CURRENCIES = Object.keys(CURRENCY_CONFIG);
+const MAIN_CURRENCIES = SUPPORTED_CURRENCIES.filter(c => CURRENCY_CONFIG[c].group === 'main');
+const OTHER_CURRENCIES = SUPPORTED_CURRENCIES.filter(c => CURRENCY_CONFIG[c].group === 'other');
 
 const COIN_TYPES = ['سکه امامی', 'بهار آزادی', 'نیم سکه', 'ربع سکه', 'سکه گرمی'];
 const ASSET_TYPES = ['حساب بانکی', 'پول نقد', 'ارز', 'سکه', 'طلا', 'اوراق بهادار و سهام', 'سایر'];
-const OWNERSHIP_TYPES = [
-  { id: 'personal', label: '👤 شخصی', color: '#2196f3' },
-  { id: 'corporate', label: '🏢 شرکتی', color: '#ff9800' }
-];
 
-// تابع دریافت پرچم ارزها
-const getCurrencyFlag = (code) => {
-  const flags = {
-    'USD': '🇺🇸', 'EUR': '🇪🇺', 'GBP': '🇬🇧', 'CHF': '🇨🇭',
-    'CAD': '🇨🇦', 'AUD': '🇦🇺', 'SEK': '🇸🇪', 'NOK': '🇳🇴',
-    'RUB': '🇷🇺', 'THB': '🇹🇭', 'SGD': '🇸🇬', 'HKD': '🇭🇰',
-    'AZN': '🇦🇿', 'AMD': '🇦🇲', 'DKK': '🇩🇰', 'AED': '🇦🇪',
-    'JPY': '🇯🇵', 'TRY': '🇹🇷', 'CNY': '🇨🇳', 'SAR': '🇸🇦',
-    'INR': '🇮🇳', 'MYR': '🇲🇾', 'AFN': '🇦🇫', 'KWD': '🇰🇼',
-    'IQD': '🇮🇶', 'BHD': '🇧🇭', 'OMR': '🇴🇲', 'QAR': '🇶🇦'
-  };
-  return flags[code] || '💱';
+const ASSET_ICONS = {
+  'حساب بانکی': '🏦',
+  'پول نقد': '💰',
+  'ارز': '💵',
+  'سکه': '🪙',
+  'طلا': '🥇',
+  'اوراق بهادار و سهام': '📈',
+  'سایر': '📦',
 };
 
-// تابع دریافت نام فارسی ارز
-const getCurrencyName = (code) => {
-  const names = {
-    'USD': 'دلار آمریکا', 'EUR': 'یورو', 'GBP': 'پوند انگلیس', 'CHF': 'فرانک سوئیس',
-    'CAD': 'دلار کانادا', 'AUD': 'دلار استرالیا', 'SEK': 'کرون سوئد', 'NOK': 'کرون نروژ',
-    'RUB': 'روبل روسیه', 'THB': 'بات تایلند', 'SGD': 'دلار سنگاپور', 'HKD': 'دلار هنگ‌کنگ',
-    'AZN': 'منات آذربایجان', 'AMD': 'درام ارمنستان', 'DKK': 'کرون دانمارک', 'AED': 'درهم امارات',
-    'JPY': 'ین ژاپن', 'TRY': 'لیر ترکیه', 'CNY': 'یوان چین', 'SAR': 'ریال سعودی',
-    'INR': 'روپیه هند', 'MYR': 'رینگیت مالزی', 'AFN': 'افغانی افغانستان', 'KWD': 'دینار کویت',
-    'IQD': 'دینار عراق', 'BHD': 'دینار بحرین', 'OMR': 'ریال عمان', 'QAR': 'ریال قطر'
-  };
-  return names[code] || code;
+const ASSET_COLORS = {
+  'حساب بانکی': '#2196f3',
+  'پول نقد': '#4caf50',
+  'ارز': '#ff9800',
+  'سکه': '#9c27b0',
+  'طلا': '#ffc107',
+  'اوراق بهادار و سهام': '#f44336',
+  'سایر': '#607d8b',
 };
 
+const getCurrencyFlag = (code) => CURRENCY_CONFIG[code]?.flag || '💱';
+const getCurrencyName = (code) => CURRENCY_CONFIG[code]?.name || code;
+const getIconForType = (type) => ASSET_ICONS[type] || '📦';
+const getColorForType = (type) => ASSET_COLORS[type] || '#607d8b';
+
+// ==================== UTILITY FUNCTIONS ====================
+const formatTomans = (num) => {
+  if (num == null || isNaN(num)) return 'N/A';
+  return Math.round(num).toLocaleString('fa-IR');
+};
+
+const formatUSD = (amount) => {
+  if (amount == null || isNaN(amount)) return 'N/A';
+  return `$${Math.round(amount).toLocaleString('en-US')}`;
+};
+
+const formatCompactNumber = (num) => {
+  if (num == null) return 'N/A';
+  if (num >= 1e12) return `${(num / 1e12).toFixed(1)} هزار میلیارد`;
+  if (num >= 1e9) return `${(num / 1e9).toFixed(1)} میلیارد`;
+  if (num >= 1e6) return `${(num / 1e6).toFixed(1)} میلیون`;
+  return Math.round(num).toLocaleString('fa-IR');
+};
+
+const getJalaaliDate = (date = new Date()) => {
+  const jd = jalaali.toJalaali(date);
+  return `${jd.jy}/${String(jd.jm).padStart(2, '0')}/${String(jd.jd).padStart(2, '0')}`;
+};
+
+const getIranTime = (utcDate) => {
+  const iranTime = new Date(utcDate.getTime() + (3.5 * 60 * 60 * 1000));
+  const hours = iranTime.getHours().toString().padStart(2, '0');
+  const minutes = iranTime.getMinutes().toString().padStart(2, '0');
+  const seconds = iranTime.getSeconds().toString().padStart(2, '0');
+  return { time: `${hours}:${minutes}:${seconds}`, date: getJalaaliDate(iranTime) };
+};
+
+const validateAsset = (asset) => {
+  const errors = [];
+  if (!asset.type) errors.push('نوع دارایی الزامی است');
+  if (!asset.detail && !['حساب بانکی', 'پول نقد', 'سایر'].includes(asset.type)) {
+    errors.push('جزئیات دارایی الزامی است');
+  }
+  if (asset.type === 'ارز' && !SUPPORTED_CURRENCIES.includes(asset.detail)) {
+    errors.push('نوع ارز معتبر نیست');
+  }
+  if (asset.quantity != null && asset.quantity < 0) {
+    errors.push('مقدار نمی‌تواند منفی باشد');
+  }
+  if (asset.buyPriceTotal != null && asset.buyPriceTotal < 0) {
+    errors.push('قیمت خرید نمی‌تواند منفی باشد');
+  }
+  return errors;
+};
+
+const DEFAULT_PRICES = {
+  USD: 0, EUR: 0, GBP: 0, CHF: 0, CAD: 0, AUD: 0, SEK: 0, NOK: 0,
+  RUB: 0, THB: 0, SGD: 0, HKD: 0, AZN: 0, AMD: 0, DKK: 0, AED: 0,
+  JPY: 0, TRY: 0, CNY: 0, SAR: 0, INR: 0, MYR: 0, AFN: 0, KWD: 0,
+  IQD: 0, BHD: 0, OMR: 0, QAR: 0,
+  GOLD_18_PER_GRAM: 0, GOLD_24_PER_GRAM: 0,
+  COIN_EMAMI: 0, COIN_NIM: 0, COIN_ROB: 0, COIN_GERAMI: 0, COIN_BAHAR: 0,
+};
+
+// ==================== ASSET ITEM COMPONENT ====================
+const AssetItem = React.memo(({ asset, currentPrice, profitLoss, onPress, onLongPress }) => {
+  const currentValue = currentPrice ? currentPrice * asset.quantity : asset.buyPriceTotal;
+  const isProfit = profitLoss?.profit >= 0;
+
+  return (
+    <TouchableOpacity
+      style={styles.assetItem}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      activeOpacity={0.7}
+    >
+      <View style={styles.assetRow}>
+        <View style={[styles.assetIcon, { backgroundColor: `${getColorForType(asset.type)}15` }]}>
+          <Text style={styles.assetIconText}>{getIconForType(asset.type)}</Text>
+          <View style={[styles.ownershipBadge, { borderColor: asset.ownership === 'corporate' ? '#ff9800' : '#2196f3' }]}>
+            <Text style={styles.ownershipBadgeText}>
+              {asset.ownership === 'corporate' ? '🏢' : '👤'}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.assetInfo}>
+          <View style={styles.assetHeader}>
+            <Text style={[styles.assetType, { color: getColorForType(asset.type) }]}>
+              {asset.type}
+            </Text>
+            <View style={[
+              styles.ownershipTag,
+              asset.ownership === 'corporate' ? styles.corporateTag : styles.personalTag
+            ]}>
+              <Text style={[
+                styles.ownershipTagText,
+                asset.ownership === 'corporate' ? styles.corporateTagText : styles.personalTagText
+              ]}>
+                {asset.ownership === 'corporate' ? 'شرکتی' : 'شخصی'}
+              </Text>
+            </View>
+          </View>
+
+          <Text style={styles.assetDetail}>
+            {asset.type === 'ارز' ? `${getCurrencyFlag(asset.detail)} ${asset.detail}` : asset.detail}
+          </Text>
+
+          <View style={styles.assetMeta}>
+            {asset.type === 'ارز' && <Text style={styles.assetMetaText}>💱 {asset.quantity} واحد</Text>}
+            {asset.type === 'سکه' && <Text style={styles.assetMetaText}>🪙 {asset.quantity} عدد</Text>}
+            {asset.type === 'طلا' && <Text style={styles.assetMetaText}>⚖️ {asset.quantity} گرم</Text>}
+            {asset.buyDate && <Text style={styles.assetMetaText}>📅 {asset.buyDate}</Text>}
+          </View>
+
+          {asset.description ? (
+            <Text style={styles.assetDesc} numberOfLines={1}>📝 {asset.description}</Text>
+          ) : null}
+        </View>
+
+        <View style={styles.assetValues}>
+          <Text style={styles.assetCurrentValue}>{formatTomans(currentValue)}</Text>
+          <Text style={styles.assetValueLabel}>تومان</Text>
+          {profitLoss && (
+            <View style={[styles.profitBadge, isProfit ? styles.profitBadgeGreen : styles.profitBadgeRed]}>
+              <Text style={[styles.profitBadgeText, isProfit ? styles.profitTextGreen : styles.profitTextRed]}>
+                {isProfit ? '▲' : '▼'} {Math.abs(profitLoss.profitPercent).toFixed(1)}%
+              </Text>
+            </View>
+          )}
+          {profitLoss && (
+            <Text style={[styles.profitAmount, isProfit ? styles.positive : styles.negative]}>
+              {isProfit ? '+' : '-'}{formatTomans(Math.abs(profitLoss.profit))}
+            </Text>
+          )}
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+});
+
+// ==================== PRICE CARD COMPONENT ====================
+const PriceCard = React.memo(({ label, priceKey, value, onUpdate }) => (
+  <View style={styles.priceCard}>
+    <Text style={styles.priceCardLabel}>{label}</Text>
+    <TextInput
+      style={styles.priceCardInput}
+      keyboardType="numeric"
+      value={value?.toString() || '0'}
+      onChangeText={text => onUpdate(priceKey, text)}
+      placeholder="0"
+      placeholderTextColor="#ccc"
+    />
+  </View>
+));
+
+// ==================== MAIN APP ====================
 export default function App() {
+  // ===== State =====
   const [assets, setAssets] = useState([]);
   const [totalValue, setTotalValue] = useState(0);
   const [monthlyChange, setMonthlyChange] = useState(null);
@@ -72,7 +277,7 @@ export default function App() {
   const [lastUpdateTime, setLastUpdateTime] = useState(null);
   const [activeTab, setActiveTab] = useState('assets');
   const scrollViewRef = useRef(null);
-  
+
   const [modalVisible, setModalVisible] = useState(false);
   const [priceModalVisible, setPriceModalVisible] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
@@ -81,45 +286,159 @@ export default function App() {
   const [formData, setFormData] = useState({ quantity: 1, ownership: 'personal' });
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [tempDate, setTempDate] = useState(new Date());
-  
-  const [manualPrices, setManualPrices] = useState({
-    USD: 0, EUR: 0, GBP: 0, CHF: 0, CAD: 0, AUD: 0, SEK: 0, NOK: 0,
-    RUB: 0, THB: 0, SGD: 0, HKD: 0, AZN: 0, AMD: 0, DKK: 0, AED: 0,
-    JPY: 0, TRY: 0, CNY: 0, SAR: 0, INR: 0, MYR: 0, AFN: 0, KWD: 0,
-    IQD: 0, BHD: 0, OMR: 0, QAR: 0,
-    GOLD_18_PER_GRAM: 0, GOLD_24_PER_GRAM: 0,
-    COIN_EMAMI: 0, COIN_NIM: 0, COIN_ROB: 0, COIN_GERAMI: 0,
-    COIN_BAHAR: 0,
-  });
+
+  const [manualPrices, setManualPrices] = useState({ ...DEFAULT_PRICES });
   const [exchangeRates, setExchangeRates] = useState({});
   const [snapshots, setSnapshots] = useState([]);
-  
   const [ownershipFilter, setOwnershipFilter] = useState('all');
   const [showOwnershipChart, setShowOwnershipChart] = useState(false);
-  
+
   const [isVpnActive, setIsVpnActive] = useState(false);
   const [vpnStatusText, setVpnStatusText] = useState('در حال بررسی...');
+  const [isLoading, setIsLoading] = useState(true);
+  const [isPriceUpdating, setIsPriceUpdating] = useState(false);
 
-  // دریافت قیمت خودکار از GitHub
-  const fetchOnlinePrices = async () => {
-  try {
-    setIsOnline(true);
-    const timestamp = new Date().getTime();
-    const url = `https://raw.githubusercontent.com/nvdtairbus-ctrl/AssetManager/main/prices.json?t=${timestamp}`;
-    
-    const response = await fetch(url, {
-      cache: 'no-cache',
-      headers: {
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache',
-        'Expires': '0'
+  // ===== Core Functions =====
+  const getCurrentPrice = useCallback((asset) => {
+    const { type, detail } = asset;
+
+    if (type === 'ارز') {
+      const directPrice = manualPrices[detail];
+      if (directPrice && directPrice > 0) return directPrice;
+      if (manualPrices.USD && manualPrices.USD > 0 && exchangeRates[detail]) {
+        return manualPrices.USD / exchangeRates[detail];
+      }
+      return null;
+    }
+
+    if (type === 'سکه') {
+      const coinMap = {
+        'سکه امامی': manualPrices.COIN_EMAMI,
+        'بهار آزادی': manualPrices.COIN_BAHAR,
+        'نیم سکه': manualPrices.COIN_NIM,
+        'ربع سکه': manualPrices.COIN_ROB,
+        'سکه گرمی': manualPrices.COIN_GERAMI,
+      };
+      return coinMap[detail] || null;
+    }
+
+    if (type === 'طلا') {
+      if (detail === '18 عیار') return manualPrices.GOLD_18_PER_GRAM;
+      if (detail === '24 عیار') return manualPrices.GOLD_24_PER_GRAM;
+      return null;
+    }
+
+    if (['حساب بانکی', 'پول نقد', 'سایر'].includes(type)) {
+      return asset.quantity > 0 ? asset.buyPriceTotal / asset.quantity : asset.buyPriceTotal;
+    }
+
+    return null;
+  }, [manualPrices, exchangeRates]);
+
+  const getProfitLoss = useCallback((asset) => {
+    const currentPrice = getCurrentPrice(asset);
+    if (!currentPrice || !asset.buyPriceTotal) return null;
+    const currentValue = currentPrice * asset.quantity;
+    const profit = currentValue - asset.buyPriceTotal;
+    const profitPercent = asset.buyPriceTotal > 0 ? (profit / asset.buyPriceTotal) * 100 : 0;
+    return { profit, profitPercent };
+  }, [getCurrentPrice]);
+
+  // ===== Memoized Values =====
+  const totalValueInUSD = useMemo(() => {
+    if (!manualPrices.USD || manualPrices.USD === 0) return null;
+    return totalValue / manualPrices.USD;
+  }, [totalValue, manualPrices.USD]);
+
+  const filteredAssets = useMemo(() => {
+    if (ownershipFilter === 'all') return assets;
+    return assets.filter(a => a.ownership === ownershipFilter);
+  }, [assets, ownershipFilter]);
+
+  const ownershipStats = useMemo(() => {
+    let personalValue = 0, corporateValue = 0, personalCount = 0, corporateCount = 0;
+
+    assets.forEach(asset => {
+      const price = getCurrentPrice(asset);
+      const value = price ? price * asset.quantity : asset.buyPriceTotal || 0;
+
+      if (asset.ownership === 'corporate') {
+        corporateValue += value;
+        corporateCount++;
+      } else {
+        personalValue += value;
+        personalCount++;
       }
     });
-    
-    const data = await response.json();
 
-    if (data.usd) {
+    const total = personalValue + corporateValue;
+    return {
+      personal: { value: personalValue, percent: total > 0 ? (personalValue / total) * 100 : 0, count: personalCount },
+      corporate: { value: corporateValue, percent: total > 0 ? (corporateValue / total) * 100 : 0, count: corporateCount },
+      total,
+    };
+  }, [assets, getCurrentPrice]);
+
+  const portfolioData = useMemo(() => {
+    const itemTotals = {};
+    let total = 0;
+
+    assets.forEach(asset => {
+      const price = getCurrentPrice(asset);
+      const value = price ? price * asset.quantity : asset.buyPriceTotal || 0;
+      total += value;
+
+      const key = `${asset.type}_${asset.detail}`;
+      if (itemTotals[key]) {
+        itemTotals[key].value += value;
+        itemTotals[key].quantity += asset.quantity;
+      } else {
+        itemTotals[key] = { type: asset.type, detail: asset.detail, value, quantity: asset.quantity };
+      }
+    });
+
+    const portfolio = Object.values(itemTotals)
+      .map(item => ({ ...item, percent: total > 0 ? (item.value / total) * 100 : 0 }))
+      .sort((a, b) => b.value - a.value);
+
+    return { portfolio, total };
+  }, [assets, getCurrentPrice]);
+
+  // ===== API Calls =====
+  // ✅ بهبود: بررسی response.ok قبل از parse کردن JSON
+  const fetchOnlinePrices = useCallback(async (showAlert = true) => {
+    try {
+      setIsPriceUpdating(true);
+      const timestamp = Date.now();
+      const url = `https://raw.githubusercontent.com/nvdtairbus-ctrl/AssetManager/main/prices.json?t=${timestamp}`;
+
+      const response = await fetch(url, {
+        cache: 'no-cache',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+        },
+      });
+
+      // ✅ بررسی وضعیت HTTP قبل از parse
+      if (!response.ok) {
+        throw new Error(`HTTP Error: ${response.status} ${response.statusText}`);
+      }
+
+      let data;
+      try {
+        data = await response.json();
+      } catch (parseError) {
+        throw new Error(`خطا در پردازش داده‌ها: ${parseError.message}`);
+      }
+
+      if (!data || !data.usd) {
+        throw new Error('داده‌های دریافتی کامل نیست - فیلد usd یافت نشد');
+      }
+
       const newPrices = {
+        ...DEFAULT_PRICES,
         USD: data.usd,
         EUR: data.eur || 0,
         GBP: data.gbp || 0,
@@ -160,1009 +479,2211 @@ export default function App() {
       setManualPrices(newPrices);
       await AsyncStorage.setItem('manualPrices', JSON.stringify(newPrices));
       setIsOnline(true);
-      
-      // تبدیل UTC به زمان ایران (UTC+3:30)
-      const lastUpdateRaw = data.last_update;
-      if (lastUpdateRaw) {
-        const utcDate = new Date(lastUpdateRaw);
-        // اضافه کردن 3 ساعت و 30 دقیقه برای زمان ایران
-        const iranTime = new Date(utcDate.getTime() + (3.5 * 60 * 60 * 1000));
-        
-        // تاریخ شمسی
-        const jd = jalaali.toJalaali(iranTime);
-        const persianDate = `${jd.jy}/${String(jd.jm).padStart(2, '0')}/${String(jd.jd).padStart(2, '0')}`;
-        
-        // ساعت ایران
-        const hours = iranTime.getHours().toString().padStart(2, '0');
-        const minutes = iranTime.getMinutes().toString().padStart(2, '0');
-        const seconds = iranTime.getSeconds().toString().padStart(2, '0');
-        const persianTime = `${hours}:${minutes}:${seconds}`;
-        
-        Alert.alert('✅ موفقیت', `قیمت‌ها از GitHub دریافت شدند.\n📅 تاریخ: ${persianDate}\n⏰ ساعت ایران: ${persianTime}\n💰 قیمت دلار: ${newPrices.USD.toLocaleString()} تومان`);
-      } else {
-        Alert.alert('✅ موفقیت', `قیمت‌ها از GitHub دریافت شدند.\n💰 قیمت دلار: ${newPrices.USD.toLocaleString()} تومان`);
+
+      if (showAlert && data.last_update) {
+        const { date, time } = getIranTime(new Date(data.last_update));
+        Alert.alert(
+          '✅ بروزرسانی موفق',
+          `📅 ${date}\n⏰ ${time}\n💵 دلار: ${newPrices.USD.toLocaleString()} تومان`
+        );
       }
+
       return newPrices;
+    } catch (error) {
+      console.log('❌ خطا در دریافت قیمت:', error.message);
+      setIsOnline(false);
+      if (showAlert) {
+        Alert.alert(
+          '⚠️ خطا در دریافت قیمت‌ها',
+          `${error.message}\n\nلطفاً اینترنت خود را بررسی کنید.`
+        );
+      }
+      return null;
+    } finally {
+      setIsPriceUpdating(false);
     }
-    throw new Error('داده‌های دریافتی کامل نیست');
-  } catch (error) {
-    console.log("❌ خطا:", error);
-    setIsOnline(false);
-    Alert.alert('⚠️ خطا', 'دریافت خودکار قیمت‌ها ممکن نشد.\n\nلطفاً اینترنت خود را بررسی کنید.');
-    return null;
-  }
-};
+  }, []);
 
-  const loadAllData = async () => {
-    try {
-      const savedAssets = await AsyncStorage.getItem('assets');
-      if (savedAssets) setAssets(JSON.parse(savedAssets));
-      else loadSampleAssets();
-      
-      const savedPrices = await AsyncStorage.getItem('manualPrices');
-      if (savedPrices) setManualPrices(JSON.parse(savedPrices));
-      else await fetchOnlinePrices();
-      
-      const savedRates = await AsyncStorage.getItem('exchangeRates');
-      if (savedRates) setExchangeRates(JSON.parse(savedRates));
-      
-      const savedSnapshots = await AsyncStorage.getItem('snapshots');
-      if (savedSnapshots) setSnapshots(JSON.parse(savedSnapshots));
-      
-      const savedUpdateTime = await AsyncStorage.getItem('lastUpdateTime');
-      if (savedUpdateTime) setLastUpdateTime(savedUpdateTime);
-    } catch (error) { console.error('خطا در بارگذاری:', error); }
-  };
-
-  const loadSampleAssets = () => {
-    const sample = [
-      { id: 1, type: 'حساب بانکی', detail: 'ملت', quantity: 1, buyPriceTotal: 50000000, buyDate: '2024-01-15', description: 'حساب جاری', ownership: 'personal' },
-      { id: 2, type: 'پول نقد', detail: 'صندوق منزل', quantity: 1, buyPriceTotal: 25000000, buyDate: '2024-01-20', description: '', ownership: 'personal' },
-      { id: 3, type: 'سکه', detail: 'سکه امامی', quantity: 1, buyPriceTotal: 45000000, buyDate: '2024-01-12', description: '', ownership: 'corporate' },
-      { id: 4, type: 'سکه', detail: 'بهار آزادی', quantity: 1, buyPriceTotal: 40000000, buyDate: '2024-01-12', description: '', ownership: 'corporate' },
-    ];
-    setAssets(sample);
-    AsyncStorage.setItem('assets', JSON.stringify(sample));
-  };
-
-  const fetchExchangeRates = async () => {
+  // ✅ بهبود: بررسی response.ok
+  const fetchExchangeRates = useCallback(async () => {
     try {
       const response = await fetch('https://api.exchangerate-api.com/v4/latest/USD');
+
+      if (!response.ok) {
+        throw new Error(`HTTP Error: ${response.status}`);
+      }
+
       const data = await response.json();
+
+      if (!data || !data.rates) {
+        throw new Error('داده‌های نرخ ارز ناقص است');
+      }
+
       const filteredRates = {};
-      SUPPORTED_CURRENCIES.forEach(currency => { if (data.rates[currency]) filteredRates[currency] = data.rates[currency]; });
+      SUPPORTED_CURRENCIES.forEach(currency => {
+        if (data.rates[currency]) filteredRates[currency] = data.rates[currency];
+      });
       setExchangeRates(filteredRates);
       await AsyncStorage.setItem('exchangeRates', JSON.stringify(filteredRates));
-      await AsyncStorage.setItem('lastUpdateTime', new Date().toLocaleString());
-      setLastUpdateTime(new Date().toLocaleString());
+      const now = new Date().toLocaleString('fa-IR');
+      await AsyncStorage.setItem('lastUpdateTime', now);
+      setLastUpdateTime(now);
       setIsOnline(true);
-    } catch (error) { 
-      console.log('خطا در دریافت نرخ ارز، استفاده از کش'); 
-      setIsOnline(false); 
+    } catch (error) {
+      console.log('خطا در دریافت نرخ ارز:', error.message);
+      setIsOnline(false);
     }
-  };
+  }, []);
 
-  const getCurrentPrice = (asset) => {
-    const type = asset.type, detail = asset.detail;
-    if (type === 'ارز') {
-      const directPrice = manualPrices[detail];
-      if (directPrice && directPrice > 0) return directPrice;
-      if (manualPrices.USD && exchangeRates[detail]) return manualPrices.USD / exchangeRates[detail];
-      return null;
-    }
-    if (type === 'سکه') {
-      const coinMap = { 
-        'سکه امامی': manualPrices.COIN_EMAMI,
-        'بهار آزادی': manualPrices.COIN_BAHAR,
-        'نیم سکه': manualPrices.COIN_NIM, 
-        'ربع سکه': manualPrices.COIN_ROB, 
-        'سکه گرمی': manualPrices.COIN_GERAMI 
-      };
-      return coinMap[detail] || null;
-    }
-    if (type === 'طلا') {
-      if (detail === '18 عیار') return manualPrices.GOLD_18_PER_GRAM;
-      if (detail === '24 عیار') return manualPrices.GOLD_24_PER_GRAM;
-      return null;
-    }
-    if (type === 'حساب بانکی' || type === 'پول نقد' || type === 'سایر') return asset.buyPriceTotal / asset.quantity;
-    if (type === 'اوراق بهادار و سهام') return null;
-    return null;
-  };
+  // ===== Data Management =====
+  // ✅ بهبود: Version Migration سیستماتیک
+  const loadAllData = useCallback(async () => {
+    try {
+      setIsLoading(true);
 
-  const calculateTotalValue = () => {
+      const [savedAssets, savedPrices, savedRates, savedSnapshots, savedUpdateTime] = await Promise.all([
+        AsyncStorage.getItem('assets'),
+        AsyncStorage.getItem('manualPrices'),
+        AsyncStorage.getItem('exchangeRates'),
+        AsyncStorage.getItem('snapshots'),
+        AsyncStorage.getItem('lastUpdateTime'),
+      ]);
+
+      if (savedAssets) {
+        try {
+          const parsed = JSON.parse(savedAssets);
+          
+          // ✅ Migration با نسخه‌بندی
+          const needsMigration = parsed.some(a => (a._dataVersion || 1) < DATA_VERSION);
+          const migrated = parsed.map(migrateAsset);
+          
+          setAssets(migrated);
+          
+          // ذخیره دوباره اگر migration انجام شد
+          if (needsMigration) {
+            await AsyncStorage.setItem('assets', JSON.stringify(migrated));
+            console.log(`✅ Migration انجام شد: ${parsed.length} دارایی به نسخه ${DATA_VERSION}`);
+          }
+        } catch (parseError) {
+          console.error('خطا در خواندن دارایی‌ها:', parseError);
+          // داده خراب شده - حفظ آن و ادامه با آرایه خالی
+          await AsyncStorage.setItem('assets_backup', savedAssets);
+          setAssets([]);
+        }
+      }
+
+      if (savedPrices) {
+        try {
+          setManualPrices(JSON.parse(savedPrices));
+        } catch (e) {
+          console.error('خطا در خواندن قیمت‌ها:', e);
+        }
+      }
+      
+      if (savedRates) {
+        try {
+          setExchangeRates(JSON.parse(savedRates));
+        } catch (e) {
+          console.error('خطا در خواندن نرخ ارز:', e);
+        }
+      }
+      
+      if (savedSnapshots) {
+        try {
+          setSnapshots(JSON.parse(savedSnapshots));
+        } catch (e) {
+          console.error('خطا در خواندن snapshots:', e);
+        }
+      }
+      
+      if (savedUpdateTime) setLastUpdateTime(savedUpdateTime);
+    } catch (error) {
+      console.error('خطا در بارگذاری:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  const calculateTotalValue = useCallback(() => {
     let total = 0;
-    assets.forEach(asset => { const price = getCurrentPrice(asset); if (price) total += price * asset.quantity; else total += asset.buyPriceTotal || 0; });
-    setTotalValue(total);
-    
-    const today = new Date().toISOString().split('T')[0];
-    const newSnapshots = [...snapshots];
-    const existingIndex = newSnapshots.findIndex(s => s.date === today);
-    if (existingIndex >= 0) newSnapshots[existingIndex].value = total;
-    else newSnapshots.push({ date: today, value: total });
-    const last30Days = newSnapshots.slice(-30);
-    setSnapshots(last30Days);
-    AsyncStorage.setItem('snapshots', JSON.stringify(last30Days));
-    
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
-    const oldSnapshot = last30Days.find(s => s.date <= thirtyDaysAgoStr);
-    if (oldSnapshot && oldSnapshot.value > 0) { 
-      const change = ((total - oldSnapshot.value) / oldSnapshot.value) * 100; 
-      setMonthlyChange(change); 
-    }
-  };
-
-  const getOwnershipStats = () => {
-    let personalValue = 0, corporateValue = 0, personalCount = 0, corporateCount = 0;
-    
     assets.forEach(asset => {
       const price = getCurrentPrice(asset);
-      const value = price ? price * asset.quantity : asset.buyPriceTotal || 0;
-      
-      if (asset.ownership === 'personal') {
-        personalValue += value;
-        personalCount++;
-      } else if (asset.ownership === 'corporate') {
-        corporateValue += value;
-        corporateCount++;
-      } else {
-        personalValue += value;
-        personalCount++;
-      }
+      total += price ? price * asset.quantity : asset.buyPriceTotal || 0;
     });
-    
-    const total = personalValue + corporateValue;
-    return {
-      personal: { value: personalValue, percent: total > 0 ? (personalValue / total) * 100 : 0, count: personalCount },
-      corporate: { value: corporateValue, percent: total > 0 ? (corporateValue / total) * 100 : 0, count: corporateCount },
-      total
-    };
-  };
+    setTotalValue(total);
 
-  const saveAsset = async (asset, isEdit = false) => {
-    if (!asset.detail && asset.type !== 'ارز') { 
-      Alert.alert('خطا', 'لطفاً نام دارایی را وارد کنید'); 
-      return false; 
+    const today = new Date().toISOString().split('T')[0];
+    setSnapshots(prev => {
+      const newSnapshots = [...prev];
+      const existingIndex = newSnapshots.findIndex(s => s.date === today);
+      if (existingIndex >= 0) newSnapshots[existingIndex].value = total;
+      else newSnapshots.push({ date: today, value: total });
+      const last30Days = newSnapshots.slice(-30);
+      AsyncStorage.setItem('snapshots', JSON.stringify(last30Days));
+
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
+      const oldSnapshot = last30Days.find(s => s.date <= thirtyDaysAgoStr);
+      if (oldSnapshot && oldSnapshot.value > 0) {
+        setMonthlyChange(((total - oldSnapshot.value) / oldSnapshot.value) * 100);
+      }
+
+      return last30Days;
+    });
+  }, [assets, getCurrentPrice]);
+
+  const saveAsset = useCallback(async (asset, isEdit = false) => {
+    const errors = validateAsset(asset);
+    if (errors.length > 0) {
+      Alert.alert('⚠️ خطای اعتبارسنجی', errors.join('\n'));
+      return false;
     }
-    
-    const assetWithOwnership = {
+
+    const assetWithDefaults = {
       ...asset,
-      ownership: asset.ownership || 'personal'
+      ownership: asset.ownership || 'personal',
+      quantity: asset.quantity || 1,
+      buyPriceTotal: asset.buyPriceTotal || 0,
+      _dataVersion: DATA_VERSION,
     };
-    
+
     let newAssets;
     if (isEdit && selectedAsset) {
-      newAssets = assets.map(a => a.id === selectedAsset.id ? { ...assetWithOwnership, id: selectedAsset.id } : a);
+      newAssets = assets.map(a =>
+        a.id === selectedAsset.id ? { ...assetWithDefaults, id: selectedAsset.id } : a
+      );
     } else {
-      newAssets = [...assets, { ...assetWithOwnership, id: Date.now() }];
+      newAssets = [...assets, { ...assetWithDefaults, id: Date.now() }];
     }
-    
+
     setAssets(newAssets);
     await AsyncStorage.setItem('assets', JSON.stringify(newAssets));
-    setModalVisible(false); 
-    setEditModalVisible(false); 
-    setSelectedAsset(null); 
+    setModalVisible(false);
+    setEditModalVisible(false);
+    setSelectedAsset(null);
     setFormData({ quantity: 1, ownership: 'personal' });
     return true;
-  };
+  }, [assets, selectedAsset]);
 
-  const deleteAsset = (id) => {
-    Alert.alert('حذف دارایی', 'آیا از حذف این دارایی اطمینان دارید؟', [
-      { text: 'انصراف', style: 'cancel' },
-      { text: 'حذف', style: 'destructive', onPress: async () => { 
-        const newAssets = assets.filter(a => a.id !== id); 
-        setAssets(newAssets); 
-        await AsyncStorage.setItem('assets', JSON.stringify(newAssets)); 
-      } },
-    ]);
-  };
+  const deleteAsset = useCallback((id) => {
+    Alert.alert(
+      '🗑️ حذف دارایی',
+      'آیا از حذف این دارایی اطمینان دارید؟',
+      [
+        { text: 'انصراف', style: 'cancel' },
+        {
+          text: 'حذف',
+          style: 'destructive',
+          onPress: async () => {
+            const newAssets = assets.filter(a => a.id !== id);
+            setAssets(newAssets);
+            await AsyncStorage.setItem('assets', JSON.stringify(newAssets));
+          },
+        },
+      ]
+    );
+  }, [assets]);
 
-  const updateManualPrice = async (key, value) => { 
-    const numValue = parseInt(value) || 0; 
-    const newPrices = { ...manualPrices, [key]: numValue }; 
-    setManualPrices(newPrices); 
-    await AsyncStorage.setItem('manualPrices', JSON.stringify(newPrices)); 
-  };
-  
-  const onRefresh = async () => { 
-    setRefreshing(true); 
-    await fetchExchangeRates(); 
-    await fetchOnlinePrices(); 
-    calculateTotalValue(); 
-    setRefreshing(false); 
-  };
-  
-  const formatTomans = (num) => {
-    if (num === undefined || num === null) return 'N/A';
-    const rounded = Math.round(num);
-    return rounded.toLocaleString();
-  };
-  
-  const getProfitLoss = (asset) => { 
-    const currentPrice = getCurrentPrice(asset); 
-    if (!currentPrice || !asset.buyPriceTotal) return null; 
-    const currentValue = currentPrice * asset.quantity; 
-    const profit = currentValue - asset.buyPriceTotal; 
-    const profitPercent = asset.buyPriceTotal > 0 ? (profit / asset.buyPriceTotal) * 100 : 0; 
-    return { profit, profitPercent };
-  };
+  const updateManualPrice = useCallback(async (key, value) => {
+    const cleaned = String(value).replace(/,/g, '');
+    const numValue = Number(cleaned);
+    if (isNaN(numValue) || numValue < 0) return;
 
-  const getGroupedPortfolioData = () => {
-    const itemTotals = {};
-    let total = 0;
-    
-    assets.forEach(asset => {
-      const price = getCurrentPrice(asset);
-      const value = price ? price * asset.quantity : asset.buyPriceTotal || 0;
-      total += value;
-      
-      const key = `${asset.type}_${asset.detail}`;
-      if (itemTotals[key]) {
-        itemTotals[key].value += value;
-        itemTotals[key].quantity += asset.quantity;
-      } else {
-        itemTotals[key] = {
-          type: asset.type,
-          detail: asset.detail,
-          value: value,
-          quantity: asset.quantity,
-        };
-      }
+    setManualPrices(prev => {
+      const newPrices = { ...prev, [key]: numValue };
+      AsyncStorage.setItem('manualPrices', JSON.stringify(newPrices));
+      return newPrices;
     });
-    
-    const portfolio = Object.values(itemTotals).map(item => ({
-      ...item,
-      percent: total > 0 ? (item.value / total) * 100 : 0,
-    }));
-    
-    portfolio.sort((a, b) => b.value - a.value);
-    return { portfolio, total };
-  };
+  }, []);
 
-  const showDatePickerModal = () => setShowDatePicker(true);
-  const onDateChange = (event, selectedDate) => { 
-    setShowDatePicker(false); 
-    if (selectedDate) { 
-      setTempDate(selectedDate); 
-      setFormData({ ...formData, buyDate: selectedDate.toISOString().split('T')[0] }); 
-    } 
-  };
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await Promise.all([fetchExchangeRates(), fetchOnlinePrices(false)]);
+    setRefreshing(false);
+  }, [fetchExchangeRates, fetchOnlinePrices]);
 
-  const handleScroll = (event) => {
-    const offsetX = event.nativeEvent.contentOffset.x;
-    const page = Math.round(offsetX / width);
-    if (page === 0 && activeTab !== 'assets') setActiveTab('assets');
-    if (page === 1 && activeTab !== 'portfolio') setActiveTab('portfolio');
-  };
-
-  const scrollToPage = (page) => {
-    scrollViewRef.current?.scrollTo({ x: page * width, animated: true });
-  };
-
+  // ===== Effects =====
   useEffect(() => {
-    const checkVpnStatus = async () => {
+    const checkVpn = async () => {
       try {
-        if (Platform.OS !== 'web') {
+        if (Platform.OS !== 'web' && ExpoVpnChecker) {
           const result = await ExpoVpnChecker.checkVpn();
           setIsVpnActive(result);
-          setVpnStatusText(result ? '✅ VPN فعال است' : '⚠️ VPN فعال نیست');
+          setVpnStatusText(result ? '✅ VPN فعال' : '⚠️ VPN غیرفعال');
         } else {
-          setVpnStatusText('⚠️ وب');
+          setVpnStatusText('—');
         }
       } catch (error) {
-        console.log('خطا در تشخیص VPN:', error);
-        setVpnStatusText('❌ خطا در بررسی وضعیت VPN');
+        setVpnStatusText('❌ خطا');
       }
     };
-    checkVpnStatus();
+    checkVpn();
   }, []);
 
-  useEffect(() => { 
-    loadAllData(); 
-    fetchExchangeRates(); 
-    fetchOnlinePrices(); 
-    const interval = setInterval(() => { fetchExchangeRates(); fetchOnlinePrices(); }, 21600000); 
-    return () => clearInterval(interval); 
-  }, []);
-  
-  useEffect(() => { calculateTotalValue(); }, [assets, manualPrices, exchangeRates]);
+  // ✅ بهبود: استفاده صحیح از isMounted در interval
+  useEffect(() => {
+    let isMounted = true;
 
+    const init = async () => {
+      await loadAllData();
+      if (!isMounted) return;
+      
+      await fetchExchangeRates();
+      if (!isMounted) return;
+      
+      await fetchOnlinePrices(false);
+    };
+
+    init();
+
+    const interval = setInterval(() => {
+      if (isMounted) {
+        fetchExchangeRates();
+        fetchOnlinePrices(false);
+      }
+    }, 21600000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isLoading) {
+      calculateTotalValue();
+    }
+  }, [assets, manualPrices, exchangeRates, isLoading]);
+
+  // ===== Navigation =====
+  const handleScroll = useCallback((event) => {
+    const offsetX = event.nativeEvent.contentOffset.x;
+    const page = Math.round(offsetX / width);
+    const tab = page === 0 ? 'assets' : 'portfolio';
+    if (tab !== activeTab) setActiveTab(tab);
+  }, [activeTab]);
+
+  const scrollToPage = useCallback((page) => {
+    scrollViewRef.current?.scrollTo({ x: page * width, animated: true });
+  }, []);
+
+  const onDateChange = useCallback((event, selectedDate) => {
+    setShowDatePicker(false);
+    if (selectedDate) {
+      setTempDate(selectedDate);
+      setFormData(prev => ({ ...prev, buyDate: selectedDate.toISOString().split('T')[0] }));
+    }
+  }, []);
+
+  // ===== Render Helpers =====
   const renderOwnershipSelector = () => (
     <View style={styles.ownershipSelector}>
       <Text style={styles.fieldLabel}>🏷️ نوع مالکیت</Text>
       <View style={styles.ownershipOptions}>
-        <TouchableOpacity 
-          style={[styles.ownershipOption, formData.ownership === 'personal' && styles.ownershipOptionActive]}
-          onPress={() => setFormData({ ...formData, ownership: 'personal' })}>
-          <Text style={styles.ownershipOptionIcon}>👤</Text>
-          <Text style={styles.ownershipOptionText}>شخصی</Text>
-        </TouchableOpacity>
-        <TouchableOpacity 
-          style={[styles.ownershipOption, formData.ownership === 'corporate' && styles.ownershipOptionActive]}
-          onPress={() => setFormData({ ...formData, ownership: 'corporate' })}>
-          <Text style={styles.ownershipOptionIcon}>🏢</Text>
-          <Text style={styles.ownershipOptionText}>شرکتی</Text>
-        </TouchableOpacity>
+        {[
+          { id: 'personal', icon: '👤', label: 'شخصی', color: '#2196f3' },
+          { id: 'corporate', icon: '🏢', label: 'شرکتی', color: '#ff9800' },
+        ].map(opt => (
+          <TouchableOpacity
+            key={opt.id}
+            style={[
+              styles.ownershipOption,
+              formData.ownership === opt.id && [styles.ownershipOptionActive, { borderColor: opt.color }],
+            ]}
+            onPress={() => setFormData(prev => ({ ...prev, ownership: opt.id }))}
+          >
+            <Text style={styles.ownershipOptionIcon}>{opt.icon}</Text>
+            <Text style={[
+              styles.ownershipOptionText,
+              formData.ownership === opt.id && { color: opt.color, fontWeight: 'bold' },
+            ]}>
+              {opt.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
       </View>
     </View>
   );
 
+  const renderFormField = (label, placeholder, key, keyboardType = 'default', isNumeric = false) => (
+    <>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <TextInput
+        style={styles.input}
+        placeholder={placeholder}
+        placeholderTextColor="#bbb"
+        keyboardType={keyboardType}
+        value={formData[key] != null ? String(formData[key]) : ''}
+        onChangeText={text => {
+          if (isNumeric) {
+            const num = key === 'quantity' ? parseFloat(text) || 0 : parseInt(text.replace(/,/g, '')) || 0;
+            setFormData(prev => ({ ...prev, [key]: num }));
+          } else {
+            setFormData(prev => ({ ...prev, [key]: text }));
+          }
+        }}
+      />
+    </>
+  );
+
   const renderAssetForm = () => {
     switch (selectedAssetType) {
-      case 'حساب بانکی': return (<><Text style={styles.fieldLabel}>نام بانک یا موسسه</Text><TextInput style={styles.input} placeholder="مثال: ملت، صادرات" value={formData.detail} onChangeText={text => setFormData({ ...formData, detail: text })} /><Text style={styles.fieldLabel}>موجودی (تومان)</Text><TextInput style={styles.input} placeholder="مثال: 50,000,000" keyboardType="numeric" value={formData.buyPriceTotal ? String(formData.buyPriceTotal) : ''} onChangeText={text => setFormData({ ...formData, buyPriceTotal: parseInt(text) || 0 })} /></>);
-      case 'پول نقد': return (<><Text style={styles.fieldLabel}>منبع پول نقد</Text><TextInput style={styles.input} placeholder="مثال: صندوق منزل" value={formData.detail} onChangeText={text => setFormData({ ...formData, detail: text })} /><Text style={styles.fieldLabel}>میزان (تومان)</Text><TextInput style={styles.input} placeholder="مثال: 25,000,000" keyboardType="numeric" value={formData.buyPriceTotal ? String(formData.buyPriceTotal) : ''} onChangeText={text => setFormData({ ...formData, buyPriceTotal: parseInt(text) || 0 })} /></>);
-      case 'ارز': return (<><Text style={styles.fieldLabel}>نوع ارز</Text><ScrollView horizontal>{SUPPORTED_CURRENCIES.map(currency => (<TouchableOpacity key={currency} style={[styles.currencyButton, formData.detail === currency && styles.typeButtonActive]} onPress={() => setFormData({ ...formData, detail: currency })}><Text style={styles.currencyButtonText}>{currency}</Text></TouchableOpacity>))}</ScrollView><Text style={styles.fieldLabel}>مقدار ارز</Text><TextInput style={styles.input} placeholder="مثال: 500" keyboardType="numeric" value={formData.quantity ? String(formData.quantity) : ''} onChangeText={text => setFormData({ ...formData, quantity: parseFloat(text) || 0 })} /><Text style={styles.fieldLabel}>قیمت کل خرید (تومان)</Text><TextInput style={styles.input} placeholder="مثال: 40,000,000" keyboardType="numeric" value={formData.buyPriceTotal ? String(formData.buyPriceTotal) : ''} onChangeText={text => setFormData({ ...formData, buyPriceTotal: parseInt(text) || 0 })} /></>);
-      case 'سکه': return (<><Text style={styles.label}>نوع سکه</Text><View style={styles.rowButtons}>{COIN_TYPES.map(coin => (<TouchableOpacity key={coin} style={[styles.smallButton, formData.detail === coin && styles.typeButtonActive]} onPress={() => setFormData({ ...formData, detail: coin })}><Text style={styles.smallButtonText}>{coin}</Text></TouchableOpacity>))}</View><Text style={styles.fieldLabel}>تعداد</Text><TextInput style={styles.input} placeholder="مثال: 2" keyboardType="numeric" value={formData.quantity ? String(formData.quantity) : ''} onChangeText={text => setFormData({ ...formData, quantity: parseInt(text) || 0 })} /><Text style={styles.fieldLabel}>قیمت کل خرید (تومان)</Text><TextInput style={styles.input} placeholder="مثال: 70,000,000" keyboardType="numeric" value={formData.buyPriceTotal ? String(formData.buyPriceTotal) : ''} onChangeText={text => setFormData({ ...formData, buyPriceTotal: parseInt(text) || 0 })} /></>);
-      case 'طلا': return (<><Text style={styles.fieldLabel}>عیار طلا</Text><View style={styles.rowButtons}>{['18 عیار', '24 عیار'].map(karat => (<TouchableOpacity key={karat} style={[styles.smallButton, formData.detail === karat && styles.typeButtonActive]} onPress={() => setFormData({ ...formData, detail: karat })}><Text style={styles.smallButtonText}>{karat}</Text></TouchableOpacity>))}</View><Text style={styles.fieldLabel}>وزن (گرم)</Text><TextInput style={styles.input} placeholder="مثال: 10.5" keyboardType="numeric" value={formData.quantity ? String(formData.quantity) : ''} onChangeText={text => setFormData({ ...formData, quantity: parseFloat(text) || 0 })} /><Text style={styles.fieldLabel}>قیمت کل خرید (تومان)</Text><TextInput style={styles.input} placeholder="مثال: 10,000,000" keyboardType="numeric" value={formData.buyPriceTotal ? String(formData.buyPriceTotal) : ''} onChangeText={text => setFormData({ ...formData, buyPriceTotal: parseInt(text) || 0 })} /></>);
-      case 'اوراق بهادار و سهام': return (<><Text style={styles.fieldLabel}>نماد/نام صندوق</Text><TextInput style={styles.input} placeholder="مثال: شستا" value={formData.detail} onChangeText={text => setFormData({ ...formData, detail: text })} /><Text style={styles.fieldLabel}>حجم</Text><TextInput style={styles.input} placeholder="مثال: 1000" keyboardType="numeric" value={formData.quantity ? String(formData.quantity) : ''} onChangeText={text => setFormData({ ...formData, quantity: parseInt(text) || 0 })} /><Text style={styles.fieldLabel}>قیمت کل خرید (تومان)</Text><TextInput style={styles.input} placeholder="مثال: 5,000,000" keyboardType="numeric" value={formData.buyPriceTotal ? String(formData.buyPriceTotal) : ''} onChangeText={text => setFormData({ ...formData, buyPriceTotal: parseInt(text) || 0 })} /></>);
-      default: return (<><Text style={styles.fieldLabel}>نام دارایی</Text><TextInput style={styles.input} placeholder="مثال: خودرو، ملک" value={formData.detail} onChangeText={text => setFormData({ ...formData, detail: text })} /><Text style={styles.fieldLabel}>ارزش کل (تومان)</Text><TextInput style={styles.input} placeholder="مثال: 500,000,000" keyboardType="numeric" value={formData.buyPriceTotal ? String(formData.buyPriceTotal) : ''} onChangeText={text => setFormData({ ...formData, buyPriceTotal: parseInt(text) || 0 })} /></>);
+      case 'حساب بانکی':
+        return (
+          <>
+            {renderFormField('🏦 نام بانک یا موسسه', 'مثال: ملت، صادرات', 'detail')}
+            {renderFormField('💰 موجودی (تومان)', 'مثال: 50000000', 'buyPriceTotal', 'numeric', true)}
+          </>
+        );
+
+      case 'پول نقد':
+        return (
+          <>
+            {renderFormField('💵 منبع پول نقد', 'مثال: صندوق منزل', 'detail')}
+            {renderFormField('💰 میزان (تومان)', 'مثال: 25000000', 'buyPriceTotal', 'numeric', true)}
+          </>
+        );
+
+      case 'ارز':
+        return (
+          <>
+            <Text style={styles.fieldLabel}>💱 نوع ارز</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.currencyScrollView}>
+              {SUPPORTED_CURRENCIES.map(currency => (
+                <TouchableOpacity
+                  key={currency}
+                  style={[
+                    styles.currencyChip,
+                    formData.detail === currency && styles.currencyChipActive,
+                  ]}
+                  onPress={() => setFormData(prev => ({ ...prev, detail: currency }))}
+                >
+                  <Text style={styles.currencyChipFlag}>{getCurrencyFlag(currency)}</Text>
+                  <Text style={[
+                    styles.currencyChipText,
+                    formData.detail === currency && styles.currencyChipTextActive,
+                  ]}>
+                    {currency}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            {formData.detail && (
+              <Text style={styles.selectedCurrencyName}>
+                {getCurrencyFlag(formData.detail)} {getCurrencyName(formData.detail)}
+              </Text>
+            )}
+            {renderFormField('📊 مقدار ارز', 'مثال: 500', 'quantity', 'numeric', true)}
+            {renderFormField('💰 قیمت کل خرید (تومان)', 'مثال: 40000000', 'buyPriceTotal', 'numeric', true)}
+          </>
+        );
+
+      case 'سکه':
+        return (
+          <>
+            <Text style={styles.fieldLabel}>🪙 نوع سکه</Text>
+            <View style={styles.chipContainer}>
+              {COIN_TYPES.map(coin => (
+                <TouchableOpacity
+                  key={coin}
+                  style={[styles.chip, formData.detail === coin && styles.chipActive]}
+                  onPress={() => setFormData(prev => ({ ...prev, detail: coin }))}
+                >
+                  <Text style={[styles.chipText, formData.detail === coin && styles.chipTextActive]}>
+                    {coin}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {renderFormField('🔢 تعداد', 'مثال: 2', 'quantity', 'numeric', true)}
+            {renderFormField('💰 قیمت کل خرید (تومان)', 'مثال: 70000000', 'buyPriceTotal', 'numeric', true)}
+          </>
+        );
+
+      case 'طلا':
+        return (
+          <>
+            <Text style={styles.fieldLabel}>🥇 عیار طلا</Text>
+            <View style={styles.chipContainer}>
+              {['18 عیار', '24 عیار'].map(karat => (
+                <TouchableOpacity
+                  key={karat}
+                  style={[styles.chip, styles.chipWide, formData.detail === karat && styles.chipActive]}
+                  onPress={() => setFormData(prev => ({ ...prev, detail: karat }))}
+                >
+                  <Text style={[styles.chipText, formData.detail === karat && styles.chipTextActive]}>
+                    {karat}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {renderFormField('⚖️ وزن (گرم)', 'مثال: 10.5', 'quantity', 'numeric', true)}
+            {renderFormField('💰 قیمت کل خرید (تومان)', 'مثال: 10000000', 'buyPriceTotal', 'numeric', true)}
+          </>
+        );
+
+      case 'اوراق بهادار و سهام':
+        return (
+          <>
+            {renderFormField('📈 نماد/نام صندوق', 'مثال: شستا', 'detail')}
+            {renderFormField('📊 حجم (تعداد سهم)', 'مثال: 1000', 'quantity', 'numeric', true)}
+            {renderFormField('💰 قیمت کل خرید (تومان)', 'مثال: 5000000', 'buyPriceTotal', 'numeric', true)}
+          </>
+        );
+
+      default:
+        return (
+          <>
+            {renderFormField('📦 نام دارایی', 'مثال: خودرو، ملک', 'detail')}
+            {renderFormField('💰 ارزش کل (تومان)', 'مثال: 500000000', 'buyPriceTotal', 'numeric', true)}
+          </>
+        );
     }
   };
 
-  const renderAssetItem = (asset) => {
-    const profitLoss = getProfitLoss(asset);
-    const currentPrice = getCurrentPrice(asset);
-    const currentValue = currentPrice ? currentPrice * asset.quantity : asset.buyPriceTotal;
-    const isProfit = profitLoss && profitLoss.profit >= 0;
-    const profitValue = profitLoss ? Math.abs(profitLoss.profit) : 0;
-    const profitPercentValue = profitLoss ? Math.abs(profitLoss.profitPercent) : 0;
-    
-    if (ownershipFilter !== 'all' && asset.ownership !== ownershipFilter) return null;
-    
-    let displayDetail = asset.detail;
-    if (asset.type === 'سکه') {
-      if (asset.detail === 'سکه امامی') displayDetail = 'سکه امامی';
-      else if (asset.detail === 'بهار آزادی') displayDetail = 'بهار آزادی';
-      else displayDetail = asset.detail;
-    }
-    
-    return (
-      <TouchableOpacity key={asset.id} style={styles.assetItem} onPress={() => { 
-        setSelectedAsset(asset); 
-        setSelectedAssetType(asset.type); 
-        setFormData({ 
-          detail: asset.detail, 
-          quantity: asset.quantity, 
-          buyPriceTotal: asset.buyPriceTotal, 
-          buyDate: asset.buyDate, 
-          description: asset.description,
-          ownership: asset.ownership || 'personal'
-        }); 
-        setEditModalVisible(true); 
-      }} onLongPress={() => deleteAsset(asset.id)} activeOpacity={0.7}>
-        <View style={styles.assetRow}>
-          <View style={styles.assetIcon}>
-            <Text style={styles.assetIconText}>
-              {asset.type === 'حساب بانکی' && '🏦'}
-              {asset.type === 'پول نقد' && '💰'}
-              {asset.type === 'ارز' && '💵'}
-              {asset.type === 'سکه' && '🪙'}
-              {asset.type === 'طلا' && '🥇'}
-              {asset.type === 'اوراق بهادار و سهام' && '📈'}
-              {asset.type === 'سایر' && '📦'}
+  const renderAssetModal = (isEdit = false) => (
+    <Modal
+      animationType="slide"
+      transparent={true}
+      visible={isEdit ? editModalVisible : modalVisible}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>
+              {isEdit ? '✏️ ویرایش دارایی' : '✨ افزودن دارایی جدید'}
             </Text>
-            <View style={styles.ownershipBadge}>
-              <Text style={styles.ownershipBadgeText}>
-                {asset.ownership === 'corporate' ? '🏢' : '👤'}
-              </Text>
-            </View>
+            <TouchableOpacity
+              onPress={() => isEdit ? setEditModalVisible(false) : setModalVisible(false)}
+              style={styles.modalCloseButton}
+            >
+              <Text style={styles.modalCloseText}>✕</Text>
+            </TouchableOpacity>
           </View>
-          <View style={styles.assetInfo}>
-            <View style={styles.assetHeader}>
-              <Text style={styles.assetType}>{asset.type}</Text>
-              <Text style={[styles.ownershipLabel, asset.ownership === 'corporate' ? styles.corporateText : styles.personalText]}>
-                {asset.ownership === 'corporate' ? 'شرکتی' : 'شخصی'}
+
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <Text style={styles.fieldLabel}>📂 نوع دارایی</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              {ASSET_TYPES.map(type => (
+                <TouchableOpacity
+                  key={type}
+                  style={[
+                    styles.typeChip,
+                    selectedAssetType === type && [styles.typeChipActive, { backgroundColor: getColorForType(type) }],
+                  ]}
+                  onPress={() => setSelectedAssetType(type)}
+                >
+                  <Text style={styles.typeChipIcon}>{getIconForType(type)}</Text>
+                  <Text style={[
+                    styles.typeChipText,
+                    selectedAssetType === type && styles.typeChipTextActive,
+                  ]}>
+                    {type}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <View style={styles.formDivider} />
+
+            {renderAssetForm()}
+            {renderOwnershipSelector()}
+
+            <Text style={styles.fieldLabel}>📅 تاریخ خرید</Text>
+            <TouchableOpacity style={styles.dateButton} onPress={() => setShowDatePicker(true)}>
+              <Text style={styles.dateButtonIcon}>📅</Text>
+              <Text style={styles.dateButtonText}>
+                {formData.buyDate || 'انتخاب تاریخ'}
               </Text>
+            </TouchableOpacity>
+            {showDatePicker && (
+              <DateTimePicker value={tempDate} mode="date" display="default" onChange={onDateChange} />
+            )}
+
+            <Text style={styles.fieldLabel}>📝 توضیحات (اختیاری)</Text>
+            <TextInput
+              style={[styles.input, styles.textArea]}
+              placeholder="توضیحات اضافی..."
+              placeholderTextColor="#bbb"
+              multiline
+              numberOfLines={3}
+              value={formData.description}
+              onChangeText={text => setFormData(prev => ({ ...prev, description: text }))}
+            />
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.cancelBtn}
+                onPress={() => isEdit ? setEditModalVisible(false) : setModalVisible(false)}
+              >
+                <Text style={styles.cancelBtnText}>انصراف</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.submitBtn}
+                onPress={() => saveAsset({
+                  type: selectedAssetType,
+                  detail: formData.detail || '',
+                  quantity: formData.quantity || 1,
+                  buyPriceTotal: formData.buyPriceTotal || 0,
+                  buyDate: formData.buyDate || new Date().toISOString().split('T')[0],
+                  description: formData.description || '',
+                  ownership: formData.ownership || 'personal',
+                }, isEdit)}
+              >
+                <Text style={styles.submitBtnText}>
+                  {isEdit ? '✓ ذخیره تغییرات' : '✓ افزودن'}
+                </Text>
+              </TouchableOpacity>
             </View>
-            <Text style={styles.assetDetail}>{displayDetail}</Text>
-            <Text style={styles.assetQuantity}>مقدار: {asset.quantity}</Text>
-            <Text style={styles.assetBuyPrice}>قیمت خرید: {formatTomans(asset.buyPriceTotal)} تومان</Text>
-            <Text style={styles.assetDate}>تاریخ خرید: {asset.buyDate || 'نامشخص'}</Text>
-            {asset.description ? <Text style={styles.assetDesc}>📝 {asset.description}</Text> : null}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  // ===== Main Renders =====
+  const renderStatusBar = () => (
+    <View style={styles.statusBar}>
+      <View style={styles.statusItem}>
+        <View style={[styles.statusDot, isOnline ? styles.online : styles.offline]} />
+        <Text style={styles.statusText}>{isOnline ? 'آنلاین' : 'آفلاین'}</Text>
+      </View>
+      {isPriceUpdating && (
+        <View style={styles.statusItem}>
+          <ActivityIndicator size="small" color="#2196f3" />
+          <Text style={styles.statusText}>بروزرسانی...</Text>
+        </View>
+      )}
+      <View style={styles.statusItem}>
+        <Text style={styles.statusTextSmall}>{vpnStatusText}</Text>
+      </View>
+      {lastUpdateTime && (
+        <Text style={styles.statusTextSmall}>آخرین: {lastUpdateTime}</Text>
+      )}
+    </View>
+  );
+
+  const renderAssetsContent = () => (
+    <ScrollView
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#2196f3']} tintColor="#2196f3" />
+      }
+    >
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.title}>💼 مدیریت دارایی</Text>
+        <Text style={styles.subtitle}>{getJalaaliDate()}</Text>
+
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={[styles.headerBtn, styles.headerBtnPrices]}
+            onPress={() => setPriceModalVisible(true)}
+          >
+            <Text style={styles.headerBtnText}>⚙️ قیمت‌ها</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.headerBtn, styles.headerBtnRefresh]}
+            onPress={onRefresh}
+          >
+            <Text style={styles.headerBtnText}>🔄 بروزرسانی</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.headerBtn, styles.headerBtnAdd]}
+            onPress={() => {
+              setSelectedAssetType('حساب بانکی');
+              setFormData({ quantity: 1, ownership: 'personal' });
+              setModalVisible(true);
+            }}
+          >
+            <Text style={styles.headerBtnText}>➕ ثبت</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {renderStatusBar()}
+
+      {/* Value Cards */}
+      <View style={styles.valueCardsContainer}>
+        <View style={styles.mainValueCard}>
+          <View style={styles.valueCardHeader}>
+            <Text style={styles.valueCardIcon}>💰</Text>
+            <Text style={styles.valueCardTitle}>ارزش کل دارایی‌ها</Text>
           </View>
-          <View style={styles.assetValues}>
-            <Text style={styles.assetCurrentPrice}>قیمت روز: {currentPrice ? formatTomans(currentPrice) : 'N/A'} تومان</Text>
-            <Text style={styles.assetCurrentValue}>ارزش روز: {formatTomans(currentValue)} تومان</Text>
-            {profitLoss && (
-              <Text style={[styles.assetProfit, isProfit ? styles.positive : styles.negative]}>
-                {isProfit ? 'سود: ' : 'زیان: '}{formatTomans(profitValue)} تومان ({profitPercentValue.toFixed(1)}%)
+
+          <Text style={styles.mainValueText}>{formatTomans(totalValue)}</Text>
+          <Text style={styles.mainValueUnit}>تومان</Text>
+
+          {/* نمایش فشرده برای اعداد بزرگ */}
+          {totalValue >= 1e9 && (
+            <Text style={styles.compactValueText}>({formatCompactNumber(totalValue)} تومان)</Text>
+          )}
+
+          <View style={styles.usdSection}>
+            <View style={styles.usdDivider} />
+            {totalValueInUSD !== null ? (
+              <>
+                <Text style={styles.usdLabel}>معادل دلاری</Text>
+                <Text style={styles.usdValue}>{formatUSD(totalValueInUSD)}</Text>
+                <Text style={styles.usdRate}>
+                  (نرخ: {formatTomans(manualPrices.USD)} تومان)
+                </Text>
+              </>
+            ) : (
+              <Text style={styles.usdUnavailable}>
+                ⚠️ برای نمایش معادل دلاری، قیمت دلار را تنظیم کنید
               </Text>
             )}
           </View>
         </View>
-      </TouchableOpacity>
-    );
-  };
 
-  const renderAssetsContent = () => {
-    const filteredAssets = assets.filter(asset => {
-      if (ownershipFilter === 'all') return true;
-      return asset.ownership === ownershipFilter;
-    });
-    const filteredAssetsCount = filteredAssets.length;
-    const ownershipStats = getOwnershipStats();
-    
-    return (
-      <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#2196f3']} />}>
-        <View style={styles.header}>
-          <Text style={styles.title}>مدیریت دارایی شخصی</Text>
-          <View style={styles.headerButtons}>
-            <TouchableOpacity style={styles.headerButton} onPress={() => setPriceModalVisible(true)}>
-              <Text style={styles.headerButtonText}>⚙️ قیمت‌ها</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.headerButton} onPress={onRefresh}>
-              <Text style={styles.headerButtonText}>🔄 بروزرسانی</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.headerButton, styles.addButton]} onPress={() => { 
-              setSelectedAssetType('حساب بانکی'); 
-              setFormData({ quantity: 1, ownership: 'personal' }); 
-              setModalVisible(true); 
-            }}>
-              <Text style={styles.headerButtonText}>➕ ثبت دارایی</Text>
-            </TouchableOpacity>
-          </View>
-          
-          <View style={styles.filterContainer}>
-            <Text style={styles.filterLabel}>🔍 فیلتر بر اساس:</Text>
-            <View style={styles.filterButtons}>
-              <TouchableOpacity style={[styles.filterButton, ownershipFilter === 'all' && styles.filterActive]} onPress={() => setOwnershipFilter('all')}>
-                <Text style={[styles.filterButtonText, ownershipFilter === 'all' && styles.filterActiveText]}>همه</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.filterButton, ownershipFilter === 'personal' && styles.filterActivePersonal]} onPress={() => setOwnershipFilter('personal')}>
-                <Text style={styles.filterButtonText}>👤 شخصی</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.filterButton, ownershipFilter === 'corporate' && styles.filterActiveCorporate]} onPress={() => setOwnershipFilter('corporate')}>
-                <Text style={styles.filterButtonText}>🏢 شرکتی</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-        
-        <View style={styles.statusContainer}>
-          <View style={[styles.statusDot, isOnline ? styles.online : styles.offline]} />
-          <Text style={styles.statusText}>{isOnline ? 'آنلاین' : 'آفلاین - خطا در دریافت نرخ ارزها'}</Text>
-          {lastUpdateTime && <Text style={styles.lastUpdateText}>آخرین بروزرسانی: {lastUpdateTime}</Text>}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 12 }}>
-            <View style={[styles.statusDot, { backgroundColor: isVpnActive ? '#28a745' : '#dc3545' }]} />
-            <Text style={styles.statusText}>{vpnStatusText}</Text>
-          </View>
-        </View>
-        
-        <View style={styles.cardsContainerVertical}>
-          <View style={styles.cardVertical}><Text style={styles.cardTitle}>ارزش کل امروز</Text><Text style={styles.totalValue}>{formatTomans(totalValue)} تومان</Text></View>
-          <View style={styles.cardVertical}><Text style={styles.cardTitle}>تغییر نسبت به ماه قبل</Text><Text style={[styles.changeValue, monthlyChange >= 0 ? styles.positive : styles.negative]}>{monthlyChange !== null ? `${Math.abs(monthlyChange).toFixed(1)}%` : '0.0%'}</Text></View>
-        </View>
-        
-        <View style={styles.ownershipStatsCard}>
-          <View style={styles.ownershipStatsHeader}>
-            <Text style={styles.ownershipStatsTitle}>📊 نسبت دارایی‌ها (شخصی/شرکتی)</Text>
-            <TouchableOpacity onPress={() => setShowOwnershipChart(!showOwnershipChart)}>
-              <Text style={styles.chartToggle}>{showOwnershipChart ? '📋 نمایش لیست' : '📊 نمایش نمودار'}</Text>
-            </TouchableOpacity>
-          </View>
-          
-          {showOwnershipChart ? (
-            <View style={styles.pieChartContainer}>
-              <View style={styles.pieChart}>
-                <View style={[styles.pieSegment, { width: `${ownershipStats.personal.percent}%`, backgroundColor: '#2196f3', borderTopLeftRadius: 8, borderBottomLeftRadius: 8 }]} />
-                <View style={[styles.pieSegment, { width: `${ownershipStats.corporate.percent}%`, backgroundColor: '#ff9800', borderTopRightRadius: 8, borderBottomRightRadius: 8 }]} />
-              </View>
-              <View style={styles.pieLegend}>
-                <View style={styles.legendItem}><View style={[styles.legendColor, { backgroundColor: '#2196f3' }]} /><Text style={styles.legendText}>شخصی: {ownershipStats.personal.percent.toFixed(1)}%</Text></View>
-                <View style={styles.legendItem}><View style={[styles.legendColor, { backgroundColor: '#ff9800' }]} /><Text style={styles.legendText}>شرکتی: {ownershipStats.corporate.percent.toFixed(1)}%</Text></View>
-              </View>
-            </View>
-          ) : (
-            <View style={styles.ownershipStatsDetails}>
-              <View style={styles.statBox}>
-                <Text style={styles.statIcon}>👤</Text>
-                <Text style={styles.statValue}>{formatTomans(ownershipStats.personal.value)} تومان</Text>
-                <Text style={styles.statLabel}>شخصی ({ownershipStats.personal.count} قلم)</Text>
-                <Text style={[styles.statPercent, styles.personalText]}>{ownershipStats.personal.percent.toFixed(1)}%</Text>
-              </View>
-              <View style={styles.statDivider} />
-              <View style={styles.statBox}>
-                <Text style={styles.statIcon}>🏢</Text>
-                <Text style={styles.statValue}>{formatTomans(ownershipStats.corporate.value)} تومان</Text>
-                <Text style={styles.statLabel}>شرکتی ({ownershipStats.corporate.count} قلم)</Text>
-                <Text style={[styles.statPercent, styles.corporateText]}>{ownershipStats.corporate.percent.toFixed(1)}%</Text>
-              </View>
-            </View>
+        <View style={styles.changeCard}>
+          <Text style={styles.changeCardTitle}>📈 تغییر ۳۰ روزه</Text>
+          <Text style={[
+            styles.changeCardValue,
+            (monthlyChange ?? 0) >= 0 ? styles.positive : styles.negative,
+          ]}>
+            {monthlyChange !== null
+              ? `${monthlyChange >= 0 ? '+' : ''}${monthlyChange.toFixed(1)}%`
+              : '—'}
+          </Text>
+          {totalValueInUSD !== null && monthlyChange !== null && (
+            <Text style={styles.changeUsdText}>
+              ≈ {monthlyChange >= 0 ? '+' : ''}{formatUSD(totalValueInUSD * monthlyChange / 100)}
+            </Text>
           )}
         </View>
-        
-        <Text style={styles.sectionTitle}>📋 دارایی‌های من {ownershipFilter !== 'all' && `(${ownershipFilter === 'personal' ? 'شخصی' : 'شرکتی'})`}</Text>
-        {filteredAssets.map(asset => renderAssetItem(asset))}
-        {filteredAssetsCount === 0 && (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>هیچ دارایی با این فیلتر یافت نشد</Text>
+      </View>
+
+      {/* Ownership Stats */}
+      <View style={styles.ownershipCard}>
+        <View style={styles.ownershipCardHeader}>
+          <Text style={styles.ownershipCardTitle}>📊 تفکیک مالکیت</Text>
+          <TouchableOpacity onPress={() => setShowOwnershipChart(!showOwnershipChart)}>
+            <Text style={styles.toggleText}>
+              {showOwnershipChart ? '📋 لیست' : '📊 نمودار'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {showOwnershipChart ? (
+          <View style={styles.ownershipChartContainer}>
+            <View style={styles.ownershipBar}>
+              {ownershipStats.personal.percent > 0 && (
+                <View style={[
+                  styles.ownershipBarSegment,
+                  {
+                    width: `${ownershipStats.personal.percent}%`,
+                    backgroundColor: '#2196f3',
+                    borderTopLeftRadius: 10,
+                    borderBottomLeftRadius: 10,
+                    borderTopRightRadius: ownershipStats.corporate.percent === 0 ? 10 : 0,
+                    borderBottomRightRadius: ownershipStats.corporate.percent === 0 ? 10 : 0,
+                  },
+                ]}>
+                  {ownershipStats.personal.percent > 15 && (
+                    <Text style={styles.barSegmentText}>
+                      {ownershipStats.personal.percent.toFixed(0)}%
+                    </Text>
+                  )}
+                </View>
+              )}
+              {ownershipStats.corporate.percent > 0 && (
+                <View style={[
+                  styles.ownershipBarSegment,
+                  {
+                    width: `${ownershipStats.corporate.percent}%`,
+                    backgroundColor: '#ff9800',
+                    borderTopRightRadius: 10,
+                    borderBottomRightRadius: 10,
+                    borderTopLeftRadius: ownershipStats.personal.percent === 0 ? 10 : 0,
+                    borderBottomLeftRadius: ownershipStats.personal.percent === 0 ? 10 : 0,
+                  },
+                ]}>
+                  {ownershipStats.corporate.percent > 15 && (
+                    <Text style={styles.barSegmentText}>
+                      {ownershipStats.corporate.percent.toFixed(0)}%
+                    </Text>
+                  )}
+                </View>
+              )}
+            </View>
+            <View style={styles.ownershipLegend}>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendDot, { backgroundColor: '#2196f3' }]} />
+                <Text style={styles.legendText}>شخصی: {ownershipStats.personal.percent.toFixed(1)}%</Text>
+              </View>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendDot, { backgroundColor: '#ff9800' }]} />
+                <Text style={styles.legendText}>شرکتی: {ownershipStats.corporate.percent.toFixed(1)}%</Text>
+              </View>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.ownershipDetails}>
+            <View style={styles.ownershipDetailItem}>
+              <Text style={styles.ownershipDetailIcon}>👤</Text>
+              <View style={styles.ownershipDetailInfo}>
+                <Text style={styles.ownershipDetailLabel}>شخصی ({ownershipStats.personal.count} قلم)</Text>
+                <Text style={[styles.ownershipDetailValue, { color: '#2196f3' }]}>
+                  {formatTomans(ownershipStats.personal.value)} تومان
+                </Text>
+                {totalValueInUSD !== null && manualPrices.USD > 0 && (
+                  <Text style={styles.ownershipDetailUsd}>
+                    ≈ {formatUSD(ownershipStats.personal.value / manualPrices.USD)}
+                  </Text>
+                )}
+              </View>
+              <Text style={[styles.ownershipDetailPercent, { color: '#2196f3' }]}>
+                {ownershipStats.personal.percent.toFixed(1)}%
+              </Text>
+            </View>
+
+            <View style={styles.ownershipDivider} />
+
+            <View style={styles.ownershipDetailItem}>
+              <Text style={styles.ownershipDetailIcon}>🏢</Text>
+              <View style={styles.ownershipDetailInfo}>
+                <Text style={styles.ownershipDetailLabel}>شرکتی ({ownershipStats.corporate.count} قلم)</Text>
+                <Text style={[styles.ownershipDetailValue, { color: '#ff9800' }]}>
+                  {formatTomans(ownershipStats.corporate.value)} تومان
+                </Text>
+                {totalValueInUSD !== null && manualPrices.USD > 0 && (
+                  <Text style={styles.ownershipDetailUsd}>
+                    ≈ {formatUSD(ownershipStats.corporate.value / manualPrices.USD)}
+                  </Text>
+                )}
+              </View>
+              <Text style={[styles.ownershipDetailPercent, { color: '#ff9800' }]}>
+                {ownershipStats.corporate.percent.toFixed(1)}%
+              </Text>
+            </View>
           </View>
         )}
-      </ScrollView>
-    );
-  };
+      </View>
+
+      {/* Filter */}
+      <View style={styles.filterSection}>
+        <View style={styles.filterRow}>
+          {[
+            { id: 'all', label: '🔍 همه', activeColor: '#2196f3' },
+            { id: 'personal', label: '👤 شخصی', activeColor: '#2196f3' },
+            { id: 'corporate', label: '🏢 شرکتی', activeColor: '#ff9800' },
+          ].map(filter => (
+            <TouchableOpacity
+              key={filter.id}
+              style={[
+                styles.filterChip,
+                ownershipFilter === filter.id && [styles.filterChipActive, { backgroundColor: filter.activeColor }],
+              ]}
+              onPress={() => setOwnershipFilter(filter.id)}
+            >
+              <Text style={[
+                styles.filterChipText,
+                ownershipFilter === filter.id && styles.filterChipTextActive,
+              ]}>
+                {filter.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      {/* Asset List Header */}
+      <View style={styles.listHeader}>
+        <Text style={styles.listTitle}>
+          📋 دارایی‌ها
+          {ownershipFilter !== 'all' && ` (${ownershipFilter === 'personal' ? 'شخصی' : 'شرکتی'})`}
+        </Text>
+        <Text style={styles.listCount}>{filteredAssets.length} مورد</Text>
+      </View>
+
+      {/* Asset List */}
+      {filteredAssets.length > 0 ? (
+        filteredAssets.map(asset => (
+          <AssetItem
+            key={asset.id}
+            asset={asset}
+            currentPrice={getCurrentPrice(asset)}
+            profitLoss={getProfitLoss(asset)}
+            onPress={() => {
+              setSelectedAsset(asset);
+              setSelectedAssetType(asset.type);
+              setFormData({
+                detail: asset.detail,
+                quantity: asset.quantity,
+                buyPriceTotal: asset.buyPriceTotal,
+                buyDate: asset.buyDate,
+                description: asset.description,
+                ownership: asset.ownership || 'personal',
+              });
+              setEditModalVisible(true);
+            }}
+            onLongPress={() => deleteAsset(asset.id)}
+          />
+        ))
+      ) : (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyIcon}>📭</Text>
+          <Text style={styles.emptyTitle}>هیچ دارایی یافت نشد</Text>
+          <Text style={styles.emptySubtitle}>
+            {ownershipFilter !== 'all'
+              ? 'فیلتر را تغییر دهید یا دارایی جدید ثبت کنید'
+              : 'روی دکمه "➕ ثبت" کلیک کنید'}
+          </Text>
+        </View>
+      )}
+
+      <View style={{ height: 40 }} />
+    </ScrollView>
+  );
 
   const renderPortfolioContent = () => {
-    const { portfolio, total } = getGroupedPortfolioData();
-    const ownershipStats = getOwnershipStats();
-    
+    const { portfolio, total } = portfolioData;
+
     return (
       <ScrollView style={styles.portfolioContainer}>
-        <View style={styles.ownershipBreakdownCard}>
-          <Text style={styles.portfolioTitle}>🏢 vs 👤 تفکیک مالکیت</Text>
-          <View style={styles.ownershipComparison}>
-            <View style={styles.comparisonItem}>
-              <Text style={styles.comparisonIcon}>👤 شخصی</Text>
-              <Text style={styles.comparisonValue}>{formatTomans(ownershipStats.personal.value)}</Text>
-              <View style={styles.comparisonBar}>
-                <View style={[styles.comparisonFill, { width: `${ownershipStats.personal.percent}%`, backgroundColor: '#2196f3' }]} />
+        {/* Ownership Breakdown */}
+        <View style={styles.portfolioSection}>
+          <Text style={styles.portfolioSectionTitle}>📊 تفکیک مالکیت</Text>
+
+          {[
+            { key: 'personal', icon: '👤', label: 'شخصی', color: '#2196f3', data: ownershipStats.personal },
+            { key: 'corporate', icon: '🏢', label: 'شرکتی', color: '#ff9800', data: ownershipStats.corporate },
+          ].map(item => (
+            <View key={item.key} style={styles.portfolioOwnershipItem}>
+              <View style={styles.portfolioOwnershipHeader}>
+                <Text style={styles.portfolioOwnershipLabel}>{item.icon} {item.label}</Text>
+                <Text style={[styles.portfolioOwnershipPercent, { color: item.color }]}>
+                  {item.data.percent.toFixed(1)}%
+                </Text>
               </View>
-              <Text style={styles.comparisonPercent}>{ownershipStats.personal.percent.toFixed(1)}%</Text>
-            </View>
-            <View style={styles.comparisonItem}>
-              <Text style={styles.comparisonIcon}>🏢 شرکتی</Text>
-              <Text style={styles.comparisonValue}>{formatTomans(ownershipStats.corporate.value)}</Text>
-              <View style={styles.comparisonBar}>
-                <View style={[styles.comparisonFill, { width: `${ownershipStats.corporate.percent}%`, backgroundColor: '#ff9800' }]} />
+              <View style={styles.portfolioOwnershipBar}>
+                <View style={[
+                  styles.portfolioOwnershipBarFill,
+                  { width: `${item.data.percent}%`, backgroundColor: item.color },
+                ]} />
               </View>
-              <Text style={styles.comparisonPercent}>{ownershipStats.corporate.percent.toFixed(1)}%</Text>
+              <View style={styles.portfolioOwnershipValues}>
+                <Text style={styles.portfolioOwnershipValue}>
+                  {formatTomans(item.data.value)} تومان
+                </Text>
+                {manualPrices.USD > 0 && (
+                  <Text style={styles.portfolioOwnershipUsd}>
+                    ≈ {formatUSD(item.data.value / manualPrices.USD)}
+                  </Text>
+                )}
+              </View>
             </View>
-          </View>
-          <View style={styles.totalOwnership}>
-            <Text style={styles.totalOwnershipText}>مجموع کل: {formatTomans(ownershipStats.total)} تومان</Text>
+          ))}
+
+          <View style={styles.portfolioTotalRow}>
+            <Text style={styles.portfolioTotalLabel}>مجموع کل:</Text>
+            <View>
+              <Text style={styles.portfolioTotalValue}>{formatTomans(ownershipStats.total)} تومان</Text>
+              {manualPrices.USD > 0 && (
+                <Text style={styles.portfolioTotalUsd}>≈ {formatUSD(ownershipStats.total / manualPrices.USD)}</Text>
+              )}
+            </View>
           </View>
         </View>
-        
-        <View style={styles.portfolioCard}>
-          <Text style={styles.portfolioTitle}>📊 تحلیل پرتفوی دارایی‌ها</Text>
-          <Text style={styles.portfolioTotal}>مجموع: {formatTomans(total)} تومان</Text>
-          
+
+        {/* Portfolio Analysis */}
+        <View style={styles.portfolioSection}>
+          <Text style={styles.portfolioSectionTitle}>📈 تحلیل پرتفوی</Text>
+
           {portfolio.length > 0 ? (
             <>
-              <View style={styles.detailsTable}>
+              <View style={styles.portfolioTable}>
                 <View style={styles.tableHeader}>
-                  <Text style={[styles.tableCell, styles.tableHeaderCell, { flex: 2.5 }]}>عنوان دارایی</Text>
-                  <Text style={[styles.tableCell, styles.tableHeaderCell, { flex: 1.5 }]}>مقدار</Text>
-                  <Text style={[styles.tableCell, styles.tableHeaderCell, { flex: 1.5 }]}>درصد</Text>
-                  <Text style={[styles.tableCell, styles.tableHeaderCell, { flex: 2 }]}>ارزش (تومان)</Text>
+                  <Text style={[styles.tableCell, styles.tableHeaderCell, { flex: 2.5 }]}>دارایی</Text>
+                  <Text style={[styles.tableCell, styles.tableHeaderCell, { flex: 1.2 }]}>مقدار</Text>
+                  <Text style={[styles.tableCell, styles.tableHeaderCell, { flex: 1 }]}>سهم</Text>
+                  <Text style={[styles.tableCell, styles.tableHeaderCell, { flex: 2 }]}>ارزش</Text>
                 </View>
                 {portfolio.map((item, index) => {
-                  let quantityDisplay = '';
-                  let displayDetail = item.detail;
-                  if (item.type === 'ارز') quantityDisplay = `${item.quantity} واحد`;
-                  else if (item.type === 'سکه') {
-                    quantityDisplay = `${item.quantity} عدد`;
-                    if (item.detail === 'سکه امامی') displayDetail = 'سکه امامی';
-                    else if (item.detail === 'بهار آزادی') displayDetail = 'بهار آزادی';
-                  }
-                  else if (item.type === 'طلا') quantityDisplay = `${item.quantity} گرم`;
-                  else if (item.type === 'اوراق بهادار و سهام') quantityDisplay = `${item.quantity} سهم`;
-                  else quantityDisplay = '-';
-                  
+                  let qtyDisplay = '—';
+                  if (item.type === 'ارز') qtyDisplay = `${item.quantity} واحد`;
+                  else if (item.type === 'سکه') qtyDisplay = `${item.quantity} عدد`;
+                  else if (item.type === 'طلا') qtyDisplay = `${item.quantity} گرم`;
+                  else if (item.type === 'اوراق بهادار و سهام') qtyDisplay = `${item.quantity} سهم`;
+
                   return (
                     <View key={index} style={[styles.tableRow, index % 2 === 0 ? styles.tableRowEven : styles.tableRowOdd]}>
-                      <Text style={[styles.tableCell, { flex: 2.5, color: getColorForType(item.type), fontWeight: 'bold' }]}>
-                        {getIconForType(item.type)} {displayDetail}
+                      <Text style={[styles.tableCell, { flex: 2.5, fontWeight: '600', color: getColorForType(item.type) }]}>
+                        {getIconForType(item.type)} {item.detail}
                       </Text>
-                      <Text style={[styles.tableCell, { flex: 1.5 }]}>{quantityDisplay}</Text>
-                      <Text style={[styles.tableCell, { flex: 1.5, fontWeight: 'bold', color: getColorForType(item.type) }]}>{item.percent.toFixed(1)}%</Text>
-                      <Text style={[styles.tableCell, { flex: 2 }]}>{formatTomans(item.value)}</Text>
+                      <Text style={[styles.tableCell, { flex: 1.2, fontSize: 11 }]}>{qtyDisplay}</Text>
+                      <Text style={[styles.tableCell, { flex: 1, fontWeight: 'bold', color: getColorForType(item.type) }]}>
+                        {item.percent.toFixed(1)}%
+                      </Text>
+                      <View style={{ flex: 2 }}>
+                        <Text style={[styles.tableCell, { fontSize: 12 }]}>{formatTomans(item.value)}</Text>
+                        {manualPrices.USD > 0 && (
+                          <Text style={[styles.tableCell, { fontSize: 10, color: '#999' }]}>
+                            {formatUSD(item.value / manualPrices.USD)}
+                          </Text>
+                        )}
+                      </View>
                     </View>
                   );
                 })}
               </View>
 
-              <View style={styles.chartContainer}>
-                <Text style={styles.chartTitle}>📊 نمودار توزیع دارایی‌ها</Text>
-                {portfolio.map((item, index) => {
-                  let displayDetail = item.detail;
-                  if (item.type === 'سکه') {
-                    if (item.detail === 'سکه امامی') displayDetail = 'سکه امامی';
-                    else if (item.detail === 'بهار آزادی') displayDetail = 'بهار آزادی';
-                  }
-                  return (
-                    <View key={index} style={styles.chartItem}>
-                      <View style={styles.chartHeader}>
-                        <Text style={styles.chartType}>{getIconForType(item.type)} {displayDetail}</Text>
-                        <Text style={styles.chartPercent}>{item.percent.toFixed(1)}%</Text>
-                      </View>
-                      <View style={styles.barContainer}>
-                        <View style={[styles.bar, { width: `${item.percent}%`, backgroundColor: getColorForType(item.type) }]} />
-                      </View>
-                      <Text style={styles.chartValue}>{formatTomans(item.value)} تومان</Text>
+              <View style={styles.chartSection}>
+                <Text style={styles.chartSectionTitle}>📊 نمودار توزیع</Text>
+                {portfolio.map((item, index) => (
+                  <View key={index} style={styles.chartItem}>
+                    <View style={styles.chartItemHeader}>
+                      <Text style={styles.chartItemLabel}>
+                        {getIconForType(item.type)} {item.detail}
+                      </Text>
+                      <Text style={[styles.chartItemPercent, { color: getColorForType(item.type) }]}>
+                        {item.percent.toFixed(1)}%
+                      </Text>
                     </View>
-                  );
-                })}
+                    <View style={styles.chartBar}>
+                      <View style={[
+                        styles.chartBarFill,
+                        { width: `${Math.max(item.percent, 1)}%`, backgroundColor: getColorForType(item.type) },
+                      ]} />
+                    </View>
+                    <View style={styles.chartItemValues}>
+                      <Text style={styles.chartItemValue}>{formatTomans(item.value)} تومان</Text>
+                      {manualPrices.USD > 0 && (
+                        <Text style={styles.chartItemUsd}>{formatUSD(item.value / manualPrices.USD)}</Text>
+                      )}
+                    </View>
+                  </View>
+                ))}
               </View>
             </>
           ) : (
             <View style={styles.emptyPortfolio}>
-              <Text style={styles.emptyText}>هیچ دارایی ثبت نشده است</Text>
-              <Text style={styles.emptySubText}>برای مشاهده تحلیل پرتفوی، ابتدا دارایی ثبت کنید</Text>
+              <Text style={styles.emptyIcon}>📊</Text>
+              <Text style={styles.emptyTitle}>پرتفوی خالی است</Text>
+              <Text style={styles.emptySubtitle}>ابتدا دارایی ثبت کنید</Text>
             </View>
           )}
         </View>
 
-        <View style={styles.tipsCard}>
-          <Text style={styles.tipsTitle}>💡 نکات مدیریت سرمایه</Text>
-          <View style={styles.tipItem}><Text style={styles.tipIcon}>📌</Text><Text style={styles.tipText}>تنوع‌بخشید: سعی کنید دارایی‌های خود را بین چند دسته مختلف پخش کنید</Text></View>
-          <View style={styles.tipItem}><Text style={styles.tipIcon}>📌</Text><Text style={styles.tipText}>بروزرسانی منظم: قیمت‌های پایه را هر هفته به‌روز کنید</Text></View>
-          <View style={styles.tipItem}><Text style={styles.tipIcon}>📌</Text><Text style={styles.tipText}>ریسک‌پذیری: بیش از ۳۰٪ سرمایه خود را در یک دارایی متمرکز نکنید</Text></View>
-          <View style={styles.tipItem}><Text style={styles.tipIcon}>📌</Text><Text style={styles.tipText}>سود مرکب: سود خود را دوباره سرمایه‌گذاری کنید</Text></View>
+        {/* Tips */}
+        <View style={styles.tipsSection}>
+          <Text style={styles.tipsSectionTitle}>💡 نکات مدیریت سرمایه</Text>
+          {[
+            '📌 تنوع‌بخشید: دارایی‌ها را بین چند دسته پخش کنید',
+            '📌 بروزرسانی منظم: قیمت‌ها را هر هفته به‌روز کنید',
+            '📌 ریسک‌پذیری: بیش از ۳۰٪ را در یک دارایی متمرکز نکنید',
+            '📌 سود مرکب: سود را دوباره سرمایه‌گذاری کنید',
+          ].map((tip, i) => (
+            <Text key={i} style={styles.tipText}>{tip}</Text>
+          ))}
         </View>
+
+        <View style={{ height: 40 }} />
       </ScrollView>
     );
   };
 
-  const getIconForType = (type) => {
-    switch (type) {
-      case 'حساب بانکی': return '🏦';
-      case 'پول نقد': return '💰';
-      case 'ارز': return '💵';
-      case 'سکه': return '🪙';
-      case 'طلا': return '🥇';
-      case 'اوراق بهادار و سهام': return '📈';
-      default: return '📦';
-    }
-  };
+  // ===== Loading Screen =====
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.loadingScreen}>
+        <StatusBar barStyle="dark-content" backgroundColor="#f8f9fa" />
+        <ActivityIndicator size="large" color="#2196f3" />
+        <Text style={styles.loadingText}>در حال بارگذاری...</Text>
+      </SafeAreaView>
+    );
+  }
 
-  const getColorForType = (type) => {
-    switch (type) {
-      case 'حساب بانکی': return '#2196f3';
-      case 'پول نقد': return '#4caf50';
-      case 'ارز': return '#ff9800';
-      case 'سکه': return '#9c27b0';
-      case 'طلا': return '#ffc107';
-      case 'اوراق بهادار و سهام': return '#f44336';
-      default: return '#607d8b';
-    }
-  };
-
+  // ===== Main Return =====
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.container}>
-        <View style={styles.tabBar}>
-          <TouchableOpacity style={[styles.tab, activeTab === 'assets' && styles.activeTab]} onPress={() => { setActiveTab('assets'); scrollToPage(0); }}>
-            <Text style={[styles.tabText, activeTab === 'assets' && styles.activeTabText]}>📋 دارایی‌ها</Text>
+      <StatusBar barStyle="dark-content" backgroundColor="#f8f9fa" />
+
+      <View style={styles.tabBar}>
+        {[
+          { id: 'assets', label: '📋 دارایی‌ها', page: 0 },
+          { id: 'portfolio', label: '📊 ترکیب دارایی', page: 1 },
+        ].map(tab => (
+          <TouchableOpacity
+            key={tab.id}
+            style={[styles.tab, activeTab === tab.id && styles.activeTab]}
+            onPress={() => { setActiveTab(tab.id); scrollToPage(tab.page); }}
+          >
+            <Text style={[styles.tabText, activeTab === tab.id && styles.activeTabText]}>
+              {tab.label}
+            </Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.tab, activeTab === 'portfolio' && styles.activeTab]} onPress={() => { setActiveTab('portfolio'); scrollToPage(1); }}>
-            <Text style={[styles.tabText, activeTab === 'portfolio' && styles.activeTabText]}>📊 ترکیب دارایی</Text>
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView ref={scrollViewRef} horizontal pagingEnabled showsHorizontalScrollIndicator={false} onScroll={handleScroll} scrollEventThrottle={16}>
-          <View style={{ width: width }}>{renderAssetsContent()}</View>
-          <View style={{ width: width }}>{renderPortfolioContent()}</View>
-        </ScrollView>
-
-        {/* مودال افزودن دارایی */}
-        <Modal animationType="slide" transparent={true} visible={modalVisible}>
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-              <Text style={styles.modalTitle}>✨ افزودن دارایی جدید</Text>
-              <ScrollView>
-                <Text style={styles.label}>نوع دارایی</Text>
-                <ScrollView horizontal>
-                  {ASSET_TYPES.map(type => (
-                    <TouchableOpacity key={type} style={[styles.typeButton, selectedAssetType === type && styles.typeButtonActive]} onPress={() => setSelectedAssetType(type)}>
-                      <Text style={styles.typeButtonText}>{type}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-                {renderAssetForm()}
-                {renderOwnershipSelector()}
-                <Text style={styles.fieldLabel}>تاریخ خرید</Text>
-                <TouchableOpacity style={styles.dateButton} onPress={showDatePickerModal}>
-                  <Text style={styles.dateButtonText}>{formData.buyDate || 'انتخاب تاریخ'}</Text>
-                </TouchableOpacity>
-                {showDatePicker && (<DateTimePicker value={tempDate} mode="date" display="default" onChange={onDateChange} />)}
-                <Text style={styles.fieldLabel}>توضیحات (اختیاری)</Text>
-                <TextInput style={[styles.input, styles.textArea]} placeholder="توضیحات" multiline numberOfLines={3} value={formData.description} onChangeText={text => setFormData({ ...formData, description: text })} />
-                <View style={styles.modalButtons}>
-                  <TouchableOpacity style={styles.cancelButton} onPress={() => setModalVisible(false)}><Text style={styles.cancelButtonText}>انصراف</Text></TouchableOpacity>
-                  <TouchableOpacity style={styles.submitButton} onPress={() => { 
-                    saveAsset({ 
-                      type: selectedAssetType, 
-                      detail: formData.detail || '', 
-                      quantity: formData.quantity || 1, 
-                      buyPriceTotal: formData.buyPriceTotal || 0, 
-                      buyDate: formData.buyDate || new Date().toISOString().split('T')[0], 
-                      description: formData.description || '',
-                      ownership: formData.ownership || 'personal'
-                    }); 
-                  }}><Text style={styles.submitButtonText}>✓ افزودن</Text></TouchableOpacity>
-                </View>
-              </ScrollView>
-            </View>
-          </View>
-        </Modal>
-
-        {/* مودال ویرایش دارایی */}
-        <Modal animationType="slide" transparent={true} visible={editModalVisible}>
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-              <Text style={styles.modalTitle}>✏️ ویرایش دارایی</Text>
-              <ScrollView>
-                <Text style={styles.label}>نوع دارایی</Text>
-                <ScrollView horizontal>
-                  {ASSET_TYPES.map(type => (
-                    <TouchableOpacity key={type} style={[styles.typeButton, selectedAssetType === type && styles.typeButtonActive]} onPress={() => setSelectedAssetType(type)}>
-                      <Text style={styles.typeButtonText}>{type}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-                {renderAssetForm()}
-                {renderOwnershipSelector()}
-                <Text style={styles.fieldLabel}>تاریخ خرید</Text>
-                <TouchableOpacity style={styles.dateButton} onPress={showDatePickerModal}>
-                  <Text style={styles.dateButtonText}>{formData.buyDate || 'انتخاب تاریخ'}</Text>
-                </TouchableOpacity>
-                <Text style={styles.fieldLabel}>توضیحات</Text>
-                <TextInput style={[styles.input, styles.textArea]} placeholder="توضیحات" multiline numberOfLines={3} value={formData.description} onChangeText={text => setFormData({ ...formData, description: text })} />
-                <View style={styles.modalButtons}>
-                  <TouchableOpacity style={styles.cancelButton} onPress={() => setEditModalVisible(false)}><Text style={styles.cancelButtonText}>انصراف</Text></TouchableOpacity>
-                  <TouchableOpacity style={styles.submitButton} onPress={() => { 
-                    saveAsset({ 
-                      type: selectedAssetType, 
-                      detail: formData.detail || '', 
-                      quantity: formData.quantity || 1, 
-                      buyPriceTotal: formData.buyPriceTotal || 0, 
-                      buyDate: formData.buyDate || new Date().toISOString().split('T')[0], 
-                      description: formData.description || '',
-                      ownership: formData.ownership || 'personal'
-                    }, true); 
-                  }}><Text style={styles.submitButtonText}>✓ ذخیره تغییرات</Text></TouchableOpacity>
-                </View>
-              </ScrollView>
-            </View>
-          </View>
-        </Modal>
-
-        {/* مودال قیمت‌ها - نسخه حرفه‌ای */}
-        <Modal animationType="slide" transparent={true} visible={priceModalVisible}>
-          <View style={styles.modalOverlay}>
-            <View style={[styles.modalContent, { maxHeight: height * 0.9 }]}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>⚙️ تنظیم قیمت‌های پایه</Text>
-                <TouchableOpacity onPress={() => setPriceModalVisible(false)}>
-                  <Text style={styles.modalClose}>✖️</Text>
-                </TouchableOpacity>
-              </View>
-              <Text style={styles.modalSubtitle}>قیمت‌ها به تومان وارد شوند</Text>
-
-              
-
-              <ScrollView showsVerticalScrollIndicator={false} style={{ marginTop: 12 }}>
-                {/* 💱 ارزهای اصلی */}
-                <View style={styles.priceCategory}>
-                  <View style={styles.categoryHeader}>
-                    <Text style={styles.categoryIcon}>💱</Text>
-                    <Text style={styles.categoryTitle}>ارزهای اصلی</Text>
-                  </View>
-                  <View style={styles.priceGrid}>
-                    <View style={styles.priceCard}><Text style={styles.priceCardLabel}>🇺🇸 دلار آمریکا (USD)</Text><TextInput style={styles.priceCardInput} keyboardType="numeric" value={manualPrices.USD?.toString()} onChangeText={text => updateManualPrice('USD', text)} /></View>
-                    <View style={styles.priceCard}><Text style={styles.priceCardLabel}>🇪🇺 یورو (EUR)</Text><TextInput style={styles.priceCardInput} keyboardType="numeric" value={manualPrices.EUR?.toString()} onChangeText={text => updateManualPrice('EUR', text)} /></View>
-                    <View style={styles.priceCard}><Text style={styles.priceCardLabel}>🇬🇧 پوند انگلیس (GBP)</Text><TextInput style={styles.priceCardInput} keyboardType="numeric" value={manualPrices.GBP?.toString()} onChangeText={text => updateManualPrice('GBP', text)} /></View>
-                    <View style={styles.priceCard}><Text style={styles.priceCardLabel}>🇨🇭 فرانک سوئیس (CHF)</Text><TextInput style={styles.priceCardInput} keyboardType="numeric" value={manualPrices.CHF?.toString()} onChangeText={text => updateManualPrice('CHF', text)} /></View>
-                    <View style={styles.priceCard}><Text style={styles.priceCardLabel}>🇨🇦 دلار کانادا (CAD)</Text><TextInput style={styles.priceCardInput} keyboardType="numeric" value={manualPrices.CAD?.toString()} onChangeText={text => updateManualPrice('CAD', text)} /></View>
-                    <View style={styles.priceCard}><Text style={styles.priceCardLabel}>🇦🇺 دلار استرالیا (AUD)</Text><TextInput style={styles.priceCardInput} keyboardType="numeric" value={manualPrices.AUD?.toString()} onChangeText={text => updateManualPrice('AUD', text)} /></View>
-                    <View style={styles.priceCard}><Text style={styles.priceCardLabel}>🇸🇪 کرون سوئد (SEK)</Text><TextInput style={styles.priceCardInput} keyboardType="numeric" value={manualPrices.SEK?.toString()} onChangeText={text => updateManualPrice('SEK', text)} /></View>
-                    <View style={styles.priceCard}><Text style={styles.priceCardLabel}>🇳🇴 کرون نروژ (NOK)</Text><TextInput style={styles.priceCardInput} keyboardType="numeric" value={manualPrices.NOK?.toString()} onChangeText={text => updateManualPrice('NOK', text)} /></View>
-                    <View style={styles.priceCard}><Text style={styles.priceCardLabel}>🇷🇺 روبل روسیه (RUB)</Text><TextInput style={styles.priceCardInput} keyboardType="numeric" value={manualPrices.RUB?.toString()} onChangeText={text => updateManualPrice('RUB', text)} /></View>
-                    <View style={styles.priceCard}><Text style={styles.priceCardLabel}>🇹🇭 بات تایلند (THB)</Text><TextInput style={styles.priceCardInput} keyboardType="numeric" value={manualPrices.THB?.toString()} onChangeText={text => updateManualPrice('THB', text)} /></View>
-                  </View>
-                </View>
-
-                {/* 🌍 سایر ارزها - به صورت پویا */}
-                <View style={styles.priceCategory}>
-                  <View style={styles.categoryHeader}>
-                    <Text style={styles.categoryIcon}>🌍</Text>
-                    <Text style={styles.categoryTitle}>سایر ارزها</Text>
-                  </View>
-                  <View style={styles.priceGrid}>
-                    {SUPPORTED_CURRENCIES.slice(10).map(currency => (
-                      <View key={currency} style={styles.priceCard}>
-                        <Text style={styles.priceCardLabel}>{getCurrencyFlag(currency)} {getCurrencyName(currency)} ({currency})</Text>
-                        <TextInput style={styles.priceCardInput} keyboardType="numeric" value={manualPrices[currency]?.toString()} onChangeText={text => updateManualPrice(currency, text)} />
-                      </View>
-                    ))}
-                  </View>
-                </View>
-
-                {/* 🥇 فلزات گرانبها */}
-                <View style={styles.priceCategory}>
-                  <View style={styles.categoryHeader}>
-                    <Text style={styles.categoryIcon}>🥇</Text>
-                    <Text style={styles.categoryTitle}>فلزات گرانبها</Text>
-                  </View>
-                  <View style={styles.priceGrid}>
-                    <View style={styles.priceCard}><Text style={styles.priceCardLabel}>🥇 طلای ۱۸ عیار (هر گرم)</Text><TextInput style={styles.priceCardInput} keyboardType="numeric" value={manualPrices.GOLD_18_PER_GRAM?.toString()} onChangeText={text => updateManualPrice('GOLD_18_PER_GRAM', text)} /></View>
-                    <View style={styles.priceCard}><Text style={styles.priceCardLabel}>🥇 طلای ۲۴ عیار (هر گرم)</Text><TextInput style={styles.priceCardInput} keyboardType="numeric" value={manualPrices.GOLD_24_PER_GRAM?.toString()} onChangeText={text => updateManualPrice('GOLD_24_PER_GRAM', text)} /></View>
-                    <View style={styles.priceCard}><Text style={styles.priceCardLabel}>🪙 سکه امامی</Text><TextInput style={styles.priceCardInput} keyboardType="numeric" value={manualPrices.COIN_EMAMI?.toString()} onChangeText={text => updateManualPrice('COIN_EMAMI', text)} /></View>
-                    <View style={styles.priceCard}><Text style={styles.priceCardLabel}>🪙 سکه بهار آزادی</Text><TextInput style={styles.priceCardInput} keyboardType="numeric" value={manualPrices.COIN_BAHAR?.toString()} onChangeText={text => updateManualPrice('COIN_BAHAR', text)} /></View>
-                    <View style={styles.priceCard}><Text style={styles.priceCardLabel}>🪙 نیم سکه</Text><TextInput style={styles.priceCardInput} keyboardType="numeric" value={manualPrices.COIN_NIM?.toString()} onChangeText={text => updateManualPrice('COIN_NIM', text)} /></View>
-                    <View style={styles.priceCard}><Text style={styles.priceCardLabel}>🪙 ربع سکه</Text><TextInput style={styles.priceCardInput} keyboardType="numeric" value={manualPrices.COIN_ROB?.toString()} onChangeText={text => updateManualPrice('COIN_ROB', text)} /></View>
-                    <View style={styles.priceCard}><Text style={styles.priceCardLabel}>🪙 سکه گرمی</Text><TextInput style={styles.priceCardInput} keyboardType="numeric" value={manualPrices.COIN_GERAMI?.toString()} onChangeText={text => updateManualPrice('COIN_GERAMI', text)} /></View>
-                  </View>
-                </View>
-
-                <TouchableOpacity style={styles.saveButton} onPress={() => setPriceModalVisible(false)}>
-                  <Text style={styles.saveButtonText}>✓ ذخیره و بستن</Text>
-                </TouchableOpacity>
-              </ScrollView>
-            </View>
-          </View>
-        </Modal>
-
-        {/* WebView مخفی برای دریافت قیمت‌ها از bonbast */}
-        <WebView source={{ uri: 'https://bonbast.com/' }} style={{ display: 'none', width: 0, height: 0 }} />
+        ))}
       </View>
+
+      <ScrollView
+        ref={scrollViewRef}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
+      >
+        <View style={{ width }}>{renderAssetsContent()}</View>
+        <View style={{ width }}>{renderPortfolioContent()}</View>
+      </ScrollView>
+
+      {renderAssetModal(false)}
+      {renderAssetModal(true)}
+
+      {/* Price Settings Modal */}
+      <Modal animationType="slide" transparent={true} visible={priceModalVisible}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxHeight: height * 0.92 }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>⚙️ تنظیم قیمت‌ها</Text>
+                <Text style={styles.modalSubtitle}>قیمت‌ها به تومان</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setPriceModalVisible(false)}
+                style={styles.modalCloseButton}
+              >
+                <Text style={styles.modalCloseText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.autoUpdateBtn, isPriceUpdating && styles.autoUpdateBtnDisabled]}
+              onPress={() => fetchOnlinePrices(true)}
+              disabled={isPriceUpdating}
+            >
+              {isPriceUpdating ? (
+                <View style={styles.autoUpdateBtnContent}>
+                  <ActivityIndicator size="small" color="#fff" />
+                  <Text style={styles.autoUpdateBtnText}> در حال دریافت...</Text>
+                </View>
+              ) : (
+                <Text style={styles.autoUpdateBtnText}>🔄 دریافت خودکار از اینترنت</Text>
+              )}
+            </TouchableOpacity>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {/* Main Currencies */}
+              <View style={styles.priceSection}>
+                <Text style={styles.priceSectionTitle}>💱 ارزهای اصلی</Text>
+                <View style={styles.priceGrid}>
+                  {MAIN_CURRENCIES.map(code => (
+                    <PriceCard
+                      key={code}
+                      label={`${getCurrencyFlag(code)} ${getCurrencyName(code)} (${code})`}
+                      priceKey={code}
+                      value={manualPrices[code]}
+                      onUpdate={updateManualPrice}
+                    />
+                  ))}
+                </View>
+              </View>
+
+              {/* Other Currencies */}
+              <View style={styles.priceSection}>
+                <Text style={styles.priceSectionTitle}>🌍 سایر ارزها</Text>
+                <View style={styles.priceGrid}>
+                  {OTHER_CURRENCIES.map(code => (
+                    <PriceCard
+                      key={code}
+                      label={`${getCurrencyFlag(code)} ${getCurrencyName(code)} (${code})`}
+                      priceKey={code}
+                      value={manualPrices[code]}
+                      onUpdate={updateManualPrice}
+                    />
+                  ))}
+                </View>
+              </View>
+
+              {/* Gold & Coins */}
+              <View style={styles.priceSection}>
+                <Text style={styles.priceSectionTitle}>🥇 طلا و سکه</Text>
+                <View style={styles.priceGrid}>
+                  {[
+                    { label: '🥇 طلای ۱۸ عیار (گرم)', key: 'GOLD_18_PER_GRAM' },
+                    { label: '🥇 طلای ۲۴ عیار (گرم)', key: 'GOLD_24_PER_GRAM' },
+                    { label: '🪙 سکه امامی', key: 'COIN_EMAMI' },
+                    { label: '🪙 بهار آزادی', key: 'COIN_BAHAR' },
+                    { label: '🪙 نیم سکه', key: 'COIN_NIM' },
+                    { label: '🪙 ربع سکه', key: 'COIN_ROB' },
+                    { label: '🪙 سکه گرمی', key: 'COIN_GERAMI' },
+                  ].map(item => (
+                    <PriceCard
+                      key={item.key}
+                      label={item.label}
+                      priceKey={item.key}
+                      value={manualPrices[item.key]}
+                      onUpdate={updateManualPrice}
+                    />
+                  ))}
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={styles.priceSaveBtn}
+                onPress={() => setPriceModalVisible(false)}
+              >
+                <Text style={styles.priceSaveBtnText}>✓ ذخیره و بستن</Text>
+              </TouchableOpacity>
+
+              <View style={{ height: 20 }} />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
+// ==================== STYLES ====================
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#f5f5f5' },
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
-  tabBar: { flexDirection: 'row', backgroundColor: '#fff', paddingHorizontal: 16, paddingTop: 20, borderBottomWidth: 1, borderBottomColor: '#e0e0e0' },
-  tab: { flex: 1, paddingVertical: 12, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
-  activeTab: { borderBottomColor: '#2196f3' },
-  tabText: { fontSize: 16, color: '#666' },
-  activeTabText: { color: '#2196f3', fontWeight: 'bold' },
-  header: { backgroundColor: '#fff', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#e0e0e0' },
-  title: { fontSize: 20, fontWeight: 'bold', color: '#1a1a1a', textAlign: 'center', marginBottom: 12 },
-  headerButtons: { flexDirection: 'row', justifyContent: 'center', gap: 8 },
-  headerButton: { backgroundColor: '#2196f3', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 25 },
-  headerButtonText: { color: '#fff', fontSize: 13, fontWeight: '600' },
-  addButton: { backgroundColor: '#28a745' },
-  statusContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 8, gap: 8, flexWrap: 'wrap' },
-  statusDot: { width: 12, height: 12, borderRadius: 6 },
-  online: { backgroundColor: '#28a745' },
-  offline: { backgroundColor: '#dc3545' },
-  statusText: { fontSize: 12, color: '#666' },
-  lastUpdateText: { fontSize: 10, color: '#999', marginLeft: 8 },
-  cardsContainerVertical: { padding: 16, gap: 12 },
-  cardVertical: { backgroundColor: '#fff', padding: 20, borderRadius: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, elevation: 3, alignItems: 'center' },
-  cardTitle: { fontSize: 14, color: '#666', marginBottom: 12, textAlign: 'center' },
-  totalValue: { fontSize: 28, fontWeight: 'bold', color: '#2e7d32', textAlign: 'center' },
-  changeValue: { fontSize: 28, fontWeight: 'bold', textAlign: 'center' },
-  positive: { color: '#2e7d32' },
-  negative: { color: '#dc3545' },
-  sectionTitle: { fontSize: 18, fontWeight: 'bold', paddingHorizontal: 16, paddingVertical: 12, color: '#1a1a1a' },
-  assetItem: { backgroundColor: '#fff', marginHorizontal: 16, marginBottom: 12, padding: 16, borderRadius: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, elevation: 2 },
-  assetRow: { flexDirection: 'row' },
-  assetIcon: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#f0f7ff', justifyContent: 'center', alignItems: 'center', marginRight: 14, position: 'relative' },
-  assetIconText: { fontSize: 26 },
-  assetInfo: { flex: 2 },
-  assetType: { fontSize: 16, fontWeight: 'bold', color: '#1a1a1a' },
-  assetDetail: { fontSize: 14, color: '#666', marginTop: 2 },
-  assetQuantity: { fontSize: 12, color: '#888', marginTop: 2 },
-  assetBuyPrice: { fontSize: 12, color: '#888' },
-  assetDate: { fontSize: 11, color: '#999', marginTop: 2 },
-  assetDesc: { fontSize: 11, color: '#999', fontStyle: 'italic', marginTop: 2 },
-  assetValues: { alignItems: 'flex-end', justifyContent: 'center' },
-  assetCurrentPrice: { fontSize: 12, color: '#666' },
-  assetCurrentValue: { fontSize: 14, fontWeight: 'bold', color: '#1a1a1a' },
-  assetProfit: { fontSize: 12, fontWeight: '600', marginTop: 4 },
-  ownershipBadge: { position: 'absolute', bottom: -5, right: -5, width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#ddd' },
-  ownershipBadgeText: { fontSize: 12 },
-  assetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  ownershipLabel: { fontSize: 11, fontWeight: 'bold', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12, overflow: 'hidden' },
-  personalText: { backgroundColor: '#e3f2fd', color: '#1976d2' },
-  corporateText: { backgroundColor: '#fff3e0', color: '#f57c00' },
-  filterContainer: { marginTop: 12, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#e0e0e0' },
-  filterLabel: { fontSize: 12, color: '#666', marginBottom: 8 },
-  filterButtons: { flexDirection: 'row', gap: 10 },
-  filterButton: { flex: 1, paddingVertical: 8, borderRadius: 20, backgroundColor: '#f0f0f0', alignItems: 'center' },
-  filterActive: { backgroundColor: '#2196f3' },
-  filterActivePersonal: { backgroundColor: '#2196f3' },
-  filterActiveCorporate: { backgroundColor: '#ff9800' },
-  filterButtonText: { fontSize: 13, color: '#666' },
-  filterActiveText: { color: '#fff', fontWeight: 'bold' },
-  ownershipStatsCard: { backgroundColor: '#fff', marginHorizontal: 16, marginTop: 16, marginBottom: 8, padding: 16, borderRadius: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, elevation: 3 },
-  ownershipStatsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  ownershipStatsTitle: { fontSize: 16, fontWeight: 'bold', color: '#333' },
-  chartToggle: { fontSize: 12, color: '#2196f3' },
-  pieChartContainer: { alignItems: 'center' },
-  pieChart: { flexDirection: 'row', height: 40, width: '100%', borderRadius: 8, overflow: 'hidden', marginBottom: 12 },
-  pieSegment: { height: 40 },
-  pieLegend: { flexDirection: 'row', justifyContent: 'center', gap: 20 },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  legendColor: { width: 12, height: 12, borderRadius: 6 },
-  legendText: { fontSize: 12, color: '#666' },
-  ownershipStatsDetails: { flexDirection: 'row', justifyContent: 'space-between' },
-  statBox: { flex: 1, alignItems: 'center' },
-  statDivider: { width: 1, backgroundColor: '#e0e0e0', marginHorizontal: 16 },
-  statIcon: { fontSize: 28, marginBottom: 8 },
-  statValue: { fontSize: 18, fontWeight: 'bold', color: '#333', marginBottom: 4 },
-  statLabel: { fontSize: 12, color: '#666', marginBottom: 4 },
-  statPercent: { fontSize: 14, fontWeight: 'bold' },
-  portfolioContainer: { padding: 16 },
-  portfolioCard: { backgroundColor: '#fff', borderRadius: 16, padding: 16, marginBottom: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, elevation: 3 },
-  portfolioTitle: { fontSize: 18, fontWeight: 'bold', color: '#1a1a1a', marginBottom: 8, textAlign: 'center' },
-  portfolioTotal: { fontSize: 16, color: '#666', textAlign: 'center', marginBottom: 20, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#e0e0e0' },
-  detailsTable: { marginTop: 16, marginBottom: 20 },
-  tableHeader: { flexDirection: 'row', backgroundColor: '#f0f0f0', paddingVertical: 12, paddingHorizontal: 8, borderRadius: 8, marginBottom: 4 },
-  tableHeaderCell: { fontWeight: 'bold', color: '#333' },
-  tableRow: { flexDirection: 'row', paddingVertical: 10, paddingHorizontal: 8, borderRadius: 8, marginBottom: 2 },
+  // === Layout ===
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#f0f2f5',
+  },
+  loadingScreen: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#666',
+  },
+
+  // === Tab Bar ===
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight || 0 : 0,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e8e8e8',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderBottomWidth: 3,
+    borderBottomColor: 'transparent',
+  },
+  activeTab: {
+    borderBottomColor: '#2196f3',
+  },
+  tabText: {
+    fontSize: 15,
+    color: '#888',
+    fontWeight: '500',
+  },
+  activeTabText: {
+    color: '#2196f3',
+    fontWeight: 'bold',
+  },
+
+  // === Header ===
+  header: {
+    backgroundColor: '#fff',
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e8e8e8',
+  },
+  title: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#1a1a2e',
+    textAlign: 'center',
+  },
+  subtitle: {
+    fontSize: 13,
+    color: '#888',
+    textAlign: 'center',
+    marginTop: 4,
+    marginBottom: 14,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  headerBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 25,
+    minWidth: 80,
+    alignItems: 'center',
+  },
+  headerBtnPrices: { backgroundColor: '#6c5ce7' },
+  headerBtnRefresh: { backgroundColor: '#00b894' },
+  headerBtnAdd: { backgroundColor: '#e17055' },
+  headerBtnText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+
+  // === Status Bar ===
+  statusBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e8e8e8',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  statusItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  statusDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  online: { backgroundColor: '#00b894' },
+  offline: { backgroundColor: '#d63031' },
+  statusText: {
+    fontSize: 12,
+    color: '#666',
+  },
+  statusTextSmall: {
+    fontSize: 10,
+    color: '#999',
+  },
+
+  // === Value Cards ===
+  valueCardsContainer: {
+    padding: 16,
+    gap: 12,
+  },
+  mainValueCard: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 24,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  valueCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  valueCardIcon: { fontSize: 20 },
+  valueCardTitle: {
+    fontSize: 14,
+    color: '#888',
+    fontWeight: '500',
+  },
+  mainValueText: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: '#1a1a2e',
+    letterSpacing: 0.5,
+  },
+  mainValueUnit: {
+    fontSize: 14,
+    color: '#888',
+    marginTop: 2,
+  },
+  compactValueText: {
+    fontSize: 13,
+    color: '#999',
+    marginTop: 4,
+    fontStyle: 'italic',
+  },
+
+  // === USD Section ===
+  usdSection: {
+    width: '100%',
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  usdDivider: {
+    width: '60%',
+    height: 1,
+    backgroundColor: '#e8e8e8',
+    marginBottom: 14,
+  },
+  usdLabel: {
+    fontSize: 12,
+    color: '#999',
+    marginBottom: 4,
+  },
+  usdValue: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#0984e3',
+    letterSpacing: 0.5,
+  },
+  usdRate: {
+    fontSize: 11,
+    color: '#bbb',
+    marginTop: 4,
+  },
+  usdUnavailable: {
+    fontSize: 12,
+    color: '#fdcb6e',
+    textAlign: 'center',
+  },
+
+  // === Change Card ===
+  changeCard: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 20,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  changeCardTitle: {
+    fontSize: 13,
+    color: '#888',
+    marginBottom: 8,
+  },
+  changeCardValue: {
+    fontSize: 28,
+    fontWeight: 'bold',
+  },
+  changeUsdText: {
+    fontSize: 13,
+    color: '#666',
+    marginTop: 6,
+  },
+  positive: { color: '#00b894' },
+  negative: { color: '#d63031' },
+
+  // === Ownership Card ===
+  ownershipCard: {
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginBottom: 12,
+    borderRadius: 16,
+    padding: 18,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  ownershipCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  ownershipCardTitle: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#1a1a2e',
+  },
+  toggleText: {
+    fontSize: 12,
+    color: '#0984e3',
+    fontWeight: '600',
+  },
+  ownershipChartContainer: {
+    alignItems: 'center',
+  },
+  ownershipBar: {
+    flexDirection: 'row',
+    height: 36,
+    width: '100%',
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#e8e8e8',
+    marginBottom: 14,
+  },
+  ownershipBarSegment: {
+    height: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  barSegmentText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  ownershipLegend: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 24,
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  legendDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  legendText: {
+    fontSize: 13,
+    color: '#555',
+  },
+  ownershipDetails: {},
+  ownershipDetailItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  ownershipDetailIcon: {
+    fontSize: 28,
+    width: 40,
+  },
+  ownershipDetailInfo: {
+    flex: 1,
+  },
+  ownershipDetailLabel: {
+    fontSize: 13,
+    color: '#888',
+  },
+  ownershipDetailValue: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginTop: 2,
+  },
+  ownershipDetailUsd: {
+    fontSize: 12,
+    color: '#999',
+    marginTop: 2,
+  },
+  ownershipDetailPercent: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  ownershipDivider: {
+    height: 1,
+    backgroundColor: '#f0f0f0',
+    marginVertical: 4,
+  },
+
+  // === Filter ===
+  filterSection: {
+    paddingHorizontal: 16,
+    marginBottom: 8,
+  },
+  filterRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  filterChip: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 25,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  filterChipActive: {
+    borderColor: 'transparent',
+  },
+  filterChipText: {
+    fontSize: 13,
+    color: '#666',
+    fontWeight: '500',
+  },
+  filterChipTextActive: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+
+  // === Asset List ===
+  listHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  listTitle: {
+    fontSize: 17,
+    fontWeight: 'bold',
+    color: '#1a1a2e',
+  },
+  listCount: {
+    fontSize: 13,
+    color: '#888',
+    backgroundColor: '#e8e8e8',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  assetItem: {
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginBottom: 10,
+    borderRadius: 16,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  assetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  assetIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+    position: 'relative',
+  },
+  assetIconText: { fontSize: 24 },
+  ownershipBadge: {
+    position: 'absolute',
+    bottom: -4,
+    right: -4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1.5,
+  },
+  ownershipBadgeText: { fontSize: 10 },
+  assetInfo: {
+    flex: 1,
+    marginRight: 8,
+  },
+  assetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 2,
+  },
+  assetType: {
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  ownershipTag: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  personalTag: { backgroundColor: '#dfe6e9' },
+  corporateTag: { backgroundColor: '#ffeaa7' },
+  ownershipTagText: { fontSize: 10, fontWeight: '600' },
+  personalTagText: { color: '#0984e3' },
+  corporateTagText: { color: '#e17055' },
+  assetDetail: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#2d3436',
+    marginBottom: 4,
+  },
+  assetMeta: {
+    flexDirection: 'row',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  assetMetaText: {
+    fontSize: 11,
+    color: '#999',
+  },
+  assetDesc: {
+    fontSize: 11,
+    color: '#b2bec3',
+    marginTop: 2,
+  },
+  assetValues: {
+    alignItems: 'flex-end',
+    minWidth: 90,
+  },
+  assetCurrentValue: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#2d3436',
+  },
+  assetValueLabel: {
+    fontSize: 10,
+    color: '#b2bec3',
+    marginBottom: 4,
+  },
+  profitBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    marginBottom: 2,
+  },
+  profitBadgeGreen: { backgroundColor: '#e8f5e9' },
+  profitBadgeRed: { backgroundColor: '#ffebee' },
+  profitBadgeText: {
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  profitTextGreen: { color: '#00b894' },
+  profitTextRed: { color: '#d63031' },
+  profitAmount: {
+    fontSize: 10,
+    fontWeight: '500',
+  },
+
+  // === Empty State ===
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 60,
+  },
+  emptyIcon: {
+    fontSize: 48,
+    marginBottom: 12,
+  },
+  emptyTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#636e72',
+    marginBottom: 6,
+  },
+  emptySubtitle: {
+    fontSize: 13,
+    color: '#b2bec3',
+    textAlign: 'center',
+    paddingHorizontal: 40,
+  },
+
+  // === Portfolio ===
+  portfolioContainer: {
+    padding: 16,
+  },
+  portfolioSection: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  portfolioSectionTitle: {
+    fontSize: 17,
+    fontWeight: 'bold',
+    color: '#1a1a2e',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  portfolioOwnershipItem: {
+    marginBottom: 16,
+  },
+  portfolioOwnershipHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  portfolioOwnershipLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#2d3436',
+  },
+  portfolioOwnershipPercent: {
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  portfolioOwnershipBar: {
+    height: 20,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 10,
+    overflow: 'hidden',
+    marginBottom: 6,
+  },
+  portfolioOwnershipBarFill: {
+    height: 20,
+    borderRadius: 10,
+  },
+  portfolioOwnershipValues: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  portfolioOwnershipValue: {
+    fontSize: 13,
+    color: '#636e72',
+  },
+  portfolioOwnershipUsd: {
+    fontSize: 12,
+    color: '#999',
+  },
+  portfolioTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
+    marginTop: 4,
+  },
+  portfolioTotalLabel: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#2d3436',
+  },
+  portfolioTotalValue: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#1a1a2e',
+    textAlign: 'right',
+  },
+  portfolioTotalUsd: {
+    fontSize: 12,
+    color: '#0984e3',
+    textAlign: 'right',
+    marginTop: 2,
+  },
+
+  // === Table ===
+  portfolioTable: {
+    marginBottom: 20,
+  },
+  tableHeader: {
+    flexDirection: 'row',
+    backgroundColor: '#f8f9fa',
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    marginBottom: 4,
+  },
+  tableHeaderCell: {
+    fontWeight: 'bold',
+    color: '#636e72',
+    fontSize: 12,
+  },
+  tableRow: {
+    flexDirection: 'row',
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
   tableRowEven: { backgroundColor: '#fafafa' },
   tableRowOdd: { backgroundColor: '#fff' },
-  tableCell: { fontSize: 13 },
-  chartContainer: { marginTop: 20 },
-  chartTitle: { fontSize: 16, fontWeight: 'bold', color: '#333', marginBottom: 16, textAlign: 'center' },
-  chartItem: { marginBottom: 16 },
-  chartHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-  chartType: { fontSize: 14, fontWeight: '600', color: '#333' },
-  chartPercent: { fontSize: 14, fontWeight: 'bold', color: '#2196f3' },
-  barContainer: { height: 24, backgroundColor: '#e0e0e0', borderRadius: 12, overflow: 'hidden', marginBottom: 6 },
-  bar: { height: 24, borderRadius: 12 },
-  chartValue: { fontSize: 12, color: '#666', textAlign: 'right' },
-  emptyPortfolio: { paddingVertical: 40, alignItems: 'center' },
-  emptyText: { fontSize: 16, color: '#999', textAlign: 'center' },
-  emptySubText: { fontSize: 14, color: '#ccc', marginTop: 8, textAlign: 'center' },
-  tipsCard: { backgroundColor: '#e8f5e9', borderRadius: 16, padding: 16, marginBottom: 16 },
-  tipsTitle: { fontSize: 16, fontWeight: 'bold', color: '#2e7d32', marginBottom: 12, textAlign: 'center' },
-  tipItem: { flexDirection: 'row', marginBottom: 12, alignItems: 'flex-start' },
-  tipIcon: { fontSize: 16, marginRight: 8 },
-  tipText: { fontSize: 13, color: '#333', flex: 1, lineHeight: 20 },
-  
-  // استایل‌های مودال قیمت‌ها
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#e0e0e0', paddingBottom: 12, marginBottom: 8 },
-  modalClose: { fontSize: 20, color: '#666', padding: 4 },
-  autoUpdateButton: { backgroundColor: '#28a745', paddingVertical: 12, borderRadius: 12, alignItems: 'center', marginBottom: 16 },
-  autoUpdateButtonText: { color: 'white', fontWeight: 'bold', fontSize: 14 },
-  priceCategory: { marginBottom: 20 },
-  categoryHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  categoryIcon: { fontSize: 20, marginRight: 8 },
-  categoryTitle: { fontSize: 16, fontWeight: 'bold', color: '#1e4d6f' },
-  priceGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
-  priceCard: { width: '48%', backgroundColor: '#f8f9fa', borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: '#e0e0e0' },
-  priceCardLabel: { fontSize: 13, fontWeight: '500', color: '#333', marginBottom: 8 },
-  priceCardInput: { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 8, fontSize: 14, backgroundColor: 'white' },
-  saveButton: { backgroundColor: '#2196f3', paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginTop: 16, marginBottom: 20 },
-  saveButtonText: { color: 'white', fontWeight: 'bold', fontSize: 16 },
-  
-  // استایل‌های عمومی
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
-  modalContent: { backgroundColor: '#fff', borderRadius: 28, padding: 20, width: width * 0.92, maxHeight: height * 0.85 },
-  modalTitle: { fontSize: 22, fontWeight: 'bold', color: '#1a1a1a', marginBottom: 6, textAlign: 'center' },
-  modalSubtitle: { fontSize: 13, color: '#999', textAlign: 'center', marginBottom: 20 },
-  modalButtons: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 20, gap: 12 },
-  cancelButton: { flex: 1, padding: 14, borderRadius: 14, backgroundColor: '#f0f0f0', alignItems: 'center' },
-  cancelButtonText: { color: '#666', fontWeight: '600', fontSize: 16 },
-  submitButton: { flex: 1, padding: 14, borderRadius: 14, backgroundColor: '#2196f3', alignItems: 'center' },
-  submitButtonText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  fieldLabel: { fontSize: 14, fontWeight: '600', color: '#333', marginBottom: 6, marginTop: 12 },
-  input: { borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 14, padding: 14, fontSize: 15, backgroundColor: '#fafafa', marginBottom: 12, color: '#1a1a1a' },
-  textArea: { textAlignVertical: 'top', minHeight: 80 },
-  label: { fontSize: 14, fontWeight: '600', color: '#333', marginBottom: 6, marginTop: 12 },
-  typeButton: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 25, backgroundColor: '#f0f0f0', marginRight: 8, marginBottom: 8 },
-  typeButtonActive: { backgroundColor: '#2196f3' },
-  typeButtonText: { color: '#555', fontSize: 14 },
-  smallButton: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, backgroundColor: '#f0f0f0', marginRight: 8, marginBottom: 8 },
-  smallButtonText: { color: '#555', fontSize: 13 },
-  rowButtons: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 12 },
-  currencyButton: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: '#f0f0f0', marginRight: 8, marginBottom: 8 },
-  currencyButtonText: { color: '#555', fontSize: 13 },
-  dateButton: { borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 14, padding: 14, backgroundColor: '#fafafa', marginBottom: 12 },
-  dateButtonText: { fontSize: 15, color: '#1a1a1a' },
-  ownershipSelector: { marginTop: 8 },
-  ownershipOptions: { flexDirection: 'row', gap: 12, marginTop: 8 },
-  ownershipOption: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, borderRadius: 12, backgroundColor: '#f0f0f0', borderWidth: 2, borderColor: 'transparent' },
-  ownershipOptionActive: { backgroundColor: '#e3f2fd', borderColor: '#2196f3' },
-  ownershipOptionIcon: { fontSize: 20 },
-  ownershipOptionText: { fontSize: 14, fontWeight: '500', color: '#333' },
-  ownershipBreakdownCard: { backgroundColor: '#fff', borderRadius: 16, padding: 16, marginBottom: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, elevation: 3 },
-  ownershipComparison: { marginTop: 8 },
-  comparisonItem: { marginBottom: 16 },
-  comparisonIcon: { fontSize: 14, fontWeight: 'bold', marginBottom: 6 },
-  comparisonValue: { fontSize: 18, fontWeight: 'bold', color: '#333', marginBottom: 6 },
-  comparisonBar: { height: 24, backgroundColor: '#f0f0f0', borderRadius: 12, overflow: 'hidden', marginBottom: 4 },
-  comparisonFill: { height: 24, borderRadius: 12 },
-  comparisonPercent: { fontSize: 12, color: '#666', textAlign: 'right' },
-  totalOwnership: { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#e0e0e0', alignItems: 'center' },
-  totalOwnershipText: { fontSize: 14, fontWeight: 'bold', color: '#333' },
-  emptyState: { paddingVertical: 60, alignItems: 'center' },
+  tableCell: {
+    fontSize: 12,
+    color: '#2d3436',
+  },
+
+  // === Chart ===
+  chartSection: {
+    marginTop: 8,
+  },
+  chartSectionTitle: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#636e72',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  chartItem: {
+    marginBottom: 14,
+  },
+  chartItemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  chartItemLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#2d3436',
+  },
+  chartItemPercent: {
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
+  chartBar: {
+    height: 22,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 11,
+    overflow: 'hidden',
+    marginBottom: 4,
+  },
+  chartBarFill: {
+    height: 22,
+    borderRadius: 11,
+  },
+  chartItemValues: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  chartItemValue: {
+    fontSize: 11,
+    color: '#636e72',
+  },
+  chartItemUsd: {
+    fontSize: 11,
+    color: '#0984e3',
+  },
+  emptyPortfolio: {
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+
+  // === Tips ===
+  tipsSection: {
+    backgroundColor: '#dfe6e9',
+    borderRadius: 16,
+    padding: 18,
+    marginBottom: 16,
+  },
+  tipsSectionTitle: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#2d3436',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  tipText: {
+    fontSize: 13,
+    color: '#636e72',
+    marginBottom: 10,
+    lineHeight: 22,
+  },
+
+  // === Modal Common ===
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    padding: 20,
+    width: width * 0.92,
+    maxHeight: height * 0.85,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1a1a2e',
+  },
+  modalSubtitle: {
+    fontSize: 12,
+    color: '#999',
+    marginTop: 4,
+  },
+  modalCloseButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalCloseText: {
+    fontSize: 18,
+    color: '#636e72',
+    fontWeight: 'bold',
+  },
+
+  // === Form ===
+  fieldLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#2d3436',
+    marginBottom: 6,
+    marginTop: 14,
+  },
+  input: {
+    borderWidth: 1.5,
+    borderColor: '#e8e8e8',
+    borderRadius: 14,
+    padding: 14,
+    fontSize: 15,
+    backgroundColor: '#fafafa',
+    marginBottom: 4,
+    color: '#2d3436',
+  },
+  textArea: {
+    textAlignVertical: 'top',
+    minHeight: 80,
+  },
+  formDivider: {
+    height: 1,
+    backgroundColor: '#f0f0f0',
+    marginVertical: 12,
+  },
+
+  // === Chips ===
+  typeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 25,
+    backgroundColor: '#f0f0f0',
+    marginRight: 8,
+    gap: 4,
+  },
+  typeChipActive: {
+    backgroundColor: '#2196f3',
+  },
+  typeChipIcon: { fontSize: 16 },
+  typeChipText: {
+    fontSize: 13,
+    color: '#636e72',
+    fontWeight: '500',
+  },
+  typeChipTextActive: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  chipContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 8,
+  },
+  chip: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 25,
+    backgroundColor: '#f0f0f0',
+  },
+  chipWide: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  chipActive: {
+    backgroundColor: '#2196f3',
+  },
+  chipText: {
+    fontSize: 13,
+    color: '#636e72',
+    fontWeight: '500',
+  },
+  chipTextActive: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  currencyScrollView: {
+    marginBottom: 8,
+  },
+  currencyChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#f0f0f0',
+    marginRight: 8,
+    gap: 4,
+  },
+  currencyChipActive: {
+    backgroundColor: '#2196f3',
+  },
+  currencyChipFlag: { fontSize: 16 },
+  currencyChipText: {
+    fontSize: 13,
+    color: '#636e72',
+    fontWeight: '500',
+  },
+  currencyChipTextActive: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  selectedCurrencyName: {
+    fontSize: 13,
+    color: '#0984e3',
+    fontWeight: '500',
+    marginBottom: 4,
+    marginTop: 4,
+  },
+
+  // === Ownership Selector ===
+  ownershipSelector: {
+    marginTop: 8,
+  },
+  ownershipOptions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+  },
+  ownershipOption: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: '#f8f9fa',
+    borderWidth: 2,
+    borderColor: '#e8e8e8',
+  },
+  ownershipOptionActive: {
+    backgroundColor: '#e8f4fd',
+  },
+  ownershipOptionIcon: { fontSize: 22 },
+  ownershipOptionText: {
+    fontSize: 14,
+    color: '#636e72',
+    fontWeight: '500',
+  },
+
+  // === Date Button ===
+  dateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#e8e8e8',
+    borderRadius: 14,
+    padding: 14,
+    backgroundColor: '#fafafa',
+    marginBottom: 4,
+    gap: 8,
+  },
+  dateButtonIcon: { fontSize: 16 },
+  dateButtonText: {
+    fontSize: 15,
+    color: '#2d3436',
+  },
+
+  // === Modal Actions ===
+  modalActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 20,
+    marginBottom: 10,
+  },
+  cancelBtn: {
+    flex: 1,
+    padding: 15,
+    borderRadius: 14,
+    backgroundColor: '#f0f0f0',
+    alignItems: 'center',
+  },
+  cancelBtnText: {
+    color: '#636e72',
+    fontWeight: '600',
+    fontSize: 15,
+  },
+  submitBtn: {
+    flex: 1,
+    padding: 15,
+    borderRadius: 14,
+    backgroundColor: '#0984e3',
+    alignItems: 'center',
+  },
+  submitBtnText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 15,
+  },
+
+  // === Price Modal ===
+  autoUpdateBtn: {
+    backgroundColor: '#00b894',
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  autoUpdateBtnDisabled: {
+    backgroundColor: '#81c784',
+  },
+  autoUpdateBtnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  autoUpdateBtnText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 15,
+  },
+  priceSection: {
+    marginBottom: 20,
+  },
+  priceSectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1a1a2e',
+    marginBottom: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  priceGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  priceCard: {
+    width: '48%',
+    backgroundColor: '#f8f9fa',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#e8e8e8',
+  },
+  priceCardLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#636e72',
+    marginBottom: 8,
+  },
+  priceCardInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 10,
+    padding: 10,
+    fontSize: 14,
+    backgroundColor: '#fff',
+    color: '#2d3436',
+  },
+  priceSaveBtn: {
+    backgroundColor: '#0984e3',
+    paddingVertical: 16,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  priceSaveBtnText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
 });
